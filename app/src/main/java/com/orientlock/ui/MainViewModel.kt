@@ -29,6 +29,14 @@ data class MainUiState(
     val settings: AppSettings = AppSettings(),
     val canWriteSettings: Boolean = false,
     val canPostNotifications: Boolean = true,
+    /**
+     * Repository 的首次真实值是否已到达。
+     *
+     * 为 false 时 [settings] 还只是占位默认值——重启后 DataStore 里可能是竖屏，
+     * 而这里的默认是 AUTO，界面据此渲染会先闪一帧「未锁定」。
+     * 界面应据此决定是否渲染，而不是乐观地相信 settings。
+     */
+    val isLoaded: Boolean = false,
 )
 
 /**
@@ -57,11 +65,12 @@ class MainViewModel(
                 settings = settings,
                 canWriteSettings = permission.canWriteSettings,
                 canPostNotifications = permission.canPostNotifications,
+                isLoaded = true,
             )
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = MainUiState(),
+            initialValue = MainUiState(isLoaded = false),
         )
 
     /** 选一个方向。权限未授予时不写系统，也不启动服务，只让界面弹引导。 */
