@@ -1,68 +1,64 @@
 package com.orientlock.data
 
-import android.content.Context
-import android.os.Build
-import android.provider.Settings
-import android.view.Surface
 import com.orientlock.domain.NaturalOrientation
 import com.orientlock.domain.OrientationMode
 import com.orientlock.domain.RotationState
-import com.orientlock.domain.naturalOrientationFrom
+import kotlinx.coroutines.delay
 
 /**
- * 唯一接触 Settings.System 的类。
+ * 全应用唯一的方向写入策略。
  *
- * 锁定一个方向必须同时做两件事：先关闭自动旋转，再写入目标角度。
- * 只写角度而不关自动旋转无效——自动旋转开启时系统忽略 USER_ROTATION。
+ * 锁定一个方向必须同时做两件事：先关闭自动旋转，再写入目标角度。顺序不能反——
+ * 自动旋转开启时系统忽略 USER_ROTATION，且窗口管理器会用传感器值覆盖它；
+ * 先关再写能保证一次确定的跳转。
  *
- * 天然朝向探测无副作用，结果缓存在内存里，整个进程只算一次。
+ * 本类只做决策，所有系统读写都经由 [SystemOrientationAccess]，
+ * 因此可以在 JVM 上用假实现测试。
  */
-class SystemOrientationWriter(private val context: Context) {
+class SystemOrientationWriter(
+    private val access: SystemOrientationAccess,
+    private val settle: suspend (Long) -> Unit = { delay(it) },
+) {
 
+    @Volatile
     private var cachedNatural: NaturalOrientation? = null
 
-    private val resolver get() = context.contentResolver
-
     /** 是否已获得「修改系统设置」特殊权限 */
-    fun canWriteSettings(): Boolean = Settings.System.canWrite(context)
+    fun canWrite(): Boolean = access.canWrite()
 
     /**
-     * 探测并缓存设备的天然朝向，同一进程内只探测一次。
+     * 探测并缓存设备的天然朝向，同一进程内只算一次（取到稳定值才算）。
      *
-     * 做法：直接由「当前逻辑宽高 + 当前旋转角」反推，不改写任何系统设置。
+     * 零系统写入：只读，不改任何设置。
      *
      * 早先的设计是先把 USER_ROTATION 置 0 再读宽高，那有三个问题：
      * 一是留下「自动旋转被悄悄关掉」的副作用；二是旋转重构是异步的，
      * 紧接着读到的可能还是旧方向的宽高；三是这个结果会被持久化，
      * 判错就永久错——它还会连带把 OrientationMode.CURRENT
-     * 的固定角度污染成永远 0。当前实现三条一并消除。
+     * 的固定角度污染成永远 0。
+     *
+     * 现在改成纯计算，但单次采样仍可能落在方向重构的中间态：
+     * displayRotation() 已返回新值而 displayMetrics 还是旧值。
+     * 因此连采两次、间隔 [SAMPLE_SETTLE_MS]，一致才采信并缓存；
+     * 不一致说明设备正在转动，本进程先按第二次的结果用，但不缓存，
+     * 下次调用会重新采样，直到取到稳定值。
      */
-    fun naturalOrientation(): NaturalOrientation {
+    suspend fun naturalOrientation(): NaturalOrientation {
         cachedNatural?.let { return it }
-        val rotation = displayRotation()
-        val metrics = context.resources.displayMetrics
-        return naturalOrientationFrom(metrics.widthPixels, metrics.heightPixels, rotation)
-            .also { cachedNatural = it }
+        val first = access.sampleNaturalOrientation()
+        settle(SAMPLE_SETTLE_MS)
+        val second = access.sampleNaturalOrientation()
+        if (first == second) {
+            cachedNatural = second
+        }
+        return second
     }
 
-    fun readState(): RotationState = RotationState(
-        userRotation = Settings.System.getInt(
-            resolver, Settings.System.USER_ROTATION, Surface.ROTATION_0
-        ),
-        autoRotate = Settings.System.getInt(
-            resolver, Settings.System.ACCELEROMETER_ROTATION, 1
-        ) != 0,
-    )
+    fun readState(): RotationState =
+        RotationState(userRotation = access.userRotation(), autoRotate = access.autoRotate())
 
     /** 设备当前实际的显示旋转角度 */
-    fun displayRotation(): Int =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            context.display?.rotation ?: Surface.ROTATION_0
-        } else {
-            @Suppress("DEPRECATION")
-            (context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager)
-                .defaultDisplay.rotation
-        }
+    fun displayRotation(): Int = access.displayRotation()
 
     /**
      * 应用一个方向模式。
@@ -77,32 +73,40 @@ class SystemOrientationWriter(private val context: Context) {
         pinnedRotationForCurrent: Int,
     ) {
         when (mode) {
-            OrientationMode.AUTO -> applyAutoRotate(true)
+            OrientationMode.AUTO -> access.writeAutoRotate(true)
+
             OrientationMode.CURRENT -> {
-                applyAutoRotate(false)
-                applyUserRotation(pinnedRotationForCurrent)
+                // 先校验再落盘。若反过来，非法角度会在抛异常前就把自动旋转关掉，
+                // 给系统留一个「没锁成、自动旋转反而没了」的中间态。
+                checkAngle(pinnedRotationForCurrent)
+                access.writeAutoRotate(false)
+                writeUserRotation(pinnedRotationForCurrent)
             }
+
             else -> {
                 val angle = mode.userRotationFor(natural)
                     ?: error("模式 $mode 不是固定角度模式")
-                applyAutoRotate(false)
-                applyUserRotation(angle)
+                access.writeAutoRotate(false)
+                writeUserRotation(angle)
             }
         }
     }
 
-    private fun applyAutoRotate(enabled: Boolean) {
-        Settings.System.putInt(
-            resolver,
-            Settings.System.ACCELEROMETER_ROTATION,
-            if (enabled) 1 else 0,
-        )
+    private fun writeUserRotation(angle: Int) {
+        checkAngle(angle)
+        access.writeUserRotation(angle)
     }
 
-    private fun applyUserRotation(angle: Int) {
-        require(angle in Surface.ROTATION_0..Surface.ROTATION_270) {
-            "非法旋转角度 $angle"
-        }
-        Settings.System.putInt(resolver, Settings.System.USER_ROTATION, angle)
+    private fun checkAngle(angle: Int) {
+        require(angle in NATURAL..THREE_QUARTER) { "非法旋转角度 $angle" }
+    }
+
+    private companion object {
+        /** 与 android.view.Surface.ROTATION_* 等值 */
+        const val NATURAL = 0
+        const val THREE_QUARTER = 3
+
+        /** 方向重构的稳定等待；仅天然朝向探测用，且每进程最多一次 */
+        const val SAMPLE_SETTLE_MS = 300L
     }
 }
