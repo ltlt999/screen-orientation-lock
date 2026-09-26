@@ -1,9 +1,14 @@
 package com.orientlock.data
 
+import com.orientlock.data.SystemOrientationWriter.NaturalOrientationReading
 import com.orientlock.domain.DisplayRotation
 import com.orientlock.domain.NaturalOrientation
 import com.orientlock.domain.OrientationMode
 import com.orientlock.domain.RotationState
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -122,6 +127,7 @@ class SystemOrientationWriterTest {
         assertEquals(NaturalOrientation.LANDSCAPE, first)
         assertEquals("缓存后不应重新采样", first, second)
         assertEquals("第二次调用走了缓存、没有重新采样", 0, access.sampleCalls - samplesAfterFirst)
+        assertTrue("缓存命中同样应报告稳定", writer.naturalOrientation().stable)
     }
 
     @Test
@@ -189,5 +195,31 @@ class SystemOrientationWriterTest {
 
         val denied = FakeOrientationAccess(canWriteResult = false)
         assertFalse(writerOf(denied).first.canWrite())
+    }
+
+    @Test
+    fun `并发探测只跑一次`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val access = FakeOrientationAccess()
+        access.reportNatural(NaturalOrientation.LANDSCAPE)
+        // settle 变成一道闸门：让第一个探测停在两次采样之间
+        val writer = SystemOrientationWriter(access) { gate.await() }
+
+        val first = async { writer.naturalOrientation() }
+        runCurrent()   // 第一个探测采了一次、卡在 settle
+        val second = async { writer.naturalOrientation() }
+        runCurrent()   // 第二个探测必须等锁，不能自己开跑
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals("并发下只允许一次探测", 2, access.sampleCalls)
+        assertEquals(
+            NaturalOrientationReading(NaturalOrientation.LANDSCAPE, true),
+            first.await(),
+        )
+        assertEquals(
+            NaturalOrientationReading(NaturalOrientation.LANDSCAPE, true),
+            second.await(),
+        )
     }
 }

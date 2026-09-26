@@ -85,7 +85,6 @@ class SettingsOrientationRepositoryTest {
 
     @Test
     fun `探测不稳定时不落盘天然朝向`() = runTest {
-        val (repo, _, _) = fixture()
         val dataStore = FakeDataStore()
         val access = FakeOrientationAccess()
         val repo2 = SettingsOrientationRepository(dataStore, SystemOrientationWriter(access) { })
@@ -95,16 +94,21 @@ class SettingsOrientationRepositoryTest {
 
         assertNull("不稳定的探测结果不得落盘", repo2.snapshot().naturalOrientation)
         assertEquals("模式本身仍应落盘", OrientationMode.LANDSCAPE, repo2.snapshot().mode)
+        // 不落盘不等于不生效：本次仍按第二次采到的 LANDSCAPE 继续，
+        // 天然横屏设备上 LANDSCAPE 模式 = 角度 0。
+        // 少了这条，把这里的返回值改成静默回落 PORTRAIT 也不会被发现。
+        assertEquals(listOf("auto:off", "angle:0"), access.writes)
     }
 
     @Test
     fun `守护关闭时心跳不写系统`() = runTest {
         val (repo, access, _) = fixture()
+        repo.setMode(OrientationMode.PORTRAIT)
         repo.setGuardEnabled(false)
         access.writes.clear()
+        access.rotation = DisplayRotation.QUARTER // 系统已经偏离目标
 
-        assertFalse(repo.guardTick())
-
+        assertFalse("守护关闭时不得重写系统", repo.guardTick())
         assertTrue(access.writes.isEmpty())
     }
 

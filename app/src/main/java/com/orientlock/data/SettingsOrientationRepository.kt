@@ -52,10 +52,14 @@ class SettingsOrientationRepository(
             prefs[Keys.MODE] = mode.storageName
             prefs[Keys.PINNED_ROTATION] = pinned
         }
-        // AUTO 不需要天然朝向：apply 的 AUTO 分支只开自动旋转开关。
-        // 探测是 suspend 且带 300ms 稳定等待，放到这里避免解锁路径白等，
-        // 也避免一个只读动作顺手写盘。
-        val natural = if (mode == OrientationMode.AUTO) null else resolveNaturalOrientation(null)
+        val natural = if (mode == OrientationMode.AUTO) {
+            // AUTO 不需要天然朝向：apply 的 AUTO 分支只开自动旋转开关。
+            // 已落盘过就直接用，否则才探测——探测是 suspend 且带 300ms 稳定等待，
+            // 冷启动后第一次点击不该为已知答案白等。
+            null
+        } else {
+            resolveNaturalOrientation(snapshot().naturalOrientation)
+        }
         writer.apply(mode, natural, pinned)
     }
 
