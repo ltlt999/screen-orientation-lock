@@ -1247,6 +1247,9 @@ class FakeOrientationAccess(
     /** 按发生顺序记录的写操作，形如 "auto:on" / "auto:off" / "angle:1" */
     val writes = mutableListOf<String>()
 
+    /** sampleNaturalOrientation() 被调用的次数，用于断言是否发生了重新采样 */
+    var sampleCalls = 0
+
     private var autoRotateOn = true
 
     /** 待返回的「天然朝向」采样队列；见 [reportNaturalOnce] */
@@ -1271,9 +1274,11 @@ class FakeOrientationAccess(
     override fun displayRotation(): Int = rotation
 
     /** 队列里还有多个值就逐个发完，之后一直重复最后一个 */
-    override fun sampleNaturalOrientation(): NaturalOrientation =
-        if (naturalSamples.size > 1) naturalSamples.removeFirst()
+    override fun sampleNaturalOrientation(): NaturalOrientation {
+        sampleCalls++
+        return if (naturalSamples.size > 1) naturalSamples.removeFirst()
         else naturalSamples.lastOrNull() ?: NaturalOrientation.PORTRAIT
+    }
 
     /** 之后所有采样都返回同一个值 */
     fun reportNatural(value: NaturalOrientation) {
@@ -1415,11 +1420,24 @@ class SystemOrientationWriterTest {
         val (writer) = writerOf(access)
 
         val first = writer.naturalOrientation()
+        val samplesAfterFirst = access.sampleCalls
         access.reportNatural(NaturalOrientation.PORTRAIT)
         val second = writer.naturalOrientation()
 
         assertEquals(NaturalOrientation.LANDSCAPE, first)
         assertEquals("缓存后不应重新采样", first, second)
+        assertEquals("第二次调用走了缓存、没有重新采样", 0, access.sampleCalls - samplesAfterFirst)
+    }
+
+    @Test
+    fun `两次采样之间等待稳定间隔`() = runTest {
+        val access = FakeOrientationAccess()
+        val settled = mutableListOf<Long>()
+        val writer = SystemOrientationWriter(access) { settled += it }
+
+        writer.naturalOrientation()
+
+        assertEquals(listOf(300L), settled)
     }
 
     @Test
@@ -1430,10 +1448,16 @@ class SystemOrientationWriterTest {
         access.reportNaturalOnce(NaturalOrientation.PORTRAIT, NaturalOrientation.LANDSCAPE)
         val observed = writer.naturalOrientation()
         assertEquals("不一致时以第二次为准", NaturalOrientation.LANDSCAPE, observed)
+        assertEquals(2, access.sampleCalls)
 
-        access.reportNatural(NaturalOrientation.LANDSCAPE)
+        val samplesBefore = access.sampleCalls
+        access.reportNatural(NaturalOrientation.PORTRAIT)
         val again = writer.naturalOrientation()
-        assertEquals("未缓存所以重新采样", NaturalOrientation.LANDSCAPE, again)
+
+        // 关键：第二次调用必须真的重新采样（样本数 +2），
+        // 而不是返回上一次缓存的结果。若缓存守卫被删掉，这里会是 +0。
+        assertEquals("未缓存所以重新采样", NaturalOrientation.PORTRAIT, again)
+        assertEquals(2, access.sampleCalls - samplesBefore)
     }
 
     @Test
@@ -1446,13 +1470,19 @@ class SystemOrientationWriterTest {
 
     @Test
     fun `权限查询转交平台实现`() = runTest {
-        val access = FakeOrientationAccess(canWriteResult = false)
-        val (writer) = writerOf(access)
+        val granted = FakeOrientationAccess(canWriteResult = true)
+        assertTrue(writerOf(granted).first.canWrite())
 
-        assertFalse(writer.canWrite())
+        val denied = FakeOrientationAccess(canWriteResult = false)
+        assertFalse(writerOf(denied).first.canWrite())
     }
 }
 ```
+
+> **这三条测试是变异测试逼出来的**，缺一条就拦不住对应的真实缺陷：
+> - `两次采样之间等待稳定间隔` —— 少了它，把 `settle` 整行删掉仍然全绿，而"间隔 300ms 一致才缓存"是硬性要求。
+> - `两次采样不一致时不缓存下次重新采样` 里的 `sampleCalls` 断言 —— 少了它，把 `if (first == second)` 的缓存守卫删掉、改成无条件缓存，13 个测试照样全绿。那正是双采样要防的 bug。原版最后一句断言的是 `LANDSCAPE`，而设备本来就报 `LANDSCAPE`，"重新采样"与"返回缓存"两种结果无法区分，所以测不出来。
+> - `权限查询转交平台实现` 补上 `canWriteResult = true` 的正向断言 —— 原来只测 false，把 `canWrite()` 硬编码成 `false` 也能过。
 
 - [ ] **Step 3: 运行测试确认失败**
 
@@ -1554,10 +1584,10 @@ class AndroidOrientationAccess(private val context: Context) : SystemOrientation
 ```kotlin
 package com.orientlock.data
 
+import com.orientlock.domain.DisplayRotation
 import com.orientlock.domain.NaturalOrientation
 import com.orientlock.domain.OrientationMode
 import com.orientlock.domain.RotationState
-import com.orientlock.domain.userRotationFor
 import kotlinx.coroutines.delay
 
 /**
@@ -1630,6 +1660,9 @@ class SystemOrientationWriter(
             OrientationMode.AUTO -> access.writeAutoRotate(true)
 
             OrientationMode.CURRENT -> {
+                // 先校验再落盘。若反过来，非法角度会在抛异常前就把自动旋转关掉，
+                // 给系统留一个「没锁成、自动旋转反而没了」的中间态。
+                checkAngle(pinnedRotationForCurrent)
                 access.writeAutoRotate(false)
                 writeUserRotation(pinnedRotationForCurrent)
             }
@@ -1637,6 +1670,9 @@ class SystemOrientationWriter(
             else -> {
                 val angle = mode.userRotationFor(natural)
                     ?: error("模式 $mode 不是固定角度模式")
+                // 顺序有意为之：auto:off 必须先于 angle:。
+                // 自动旋转开启时窗口管理器会用传感器值覆盖 USER_ROTATION，
+                // 先关掉才能让写入的角度一次确定地生效。
                 access.writeAutoRotate(false)
                 writeUserRotation(angle)
             }
@@ -1644,20 +1680,24 @@ class SystemOrientationWriter(
     }
 
     private fun writeUserRotation(angle: Int) {
-        require(angle in NATURAL..THREE_QUARTER) { "非法旋转角度 $angle" }
+        checkAngle(angle)
         access.writeUserRotation(angle)
     }
 
-    private companion object {
-        /** 与 android.view.Surface.ROTATION_* 等值，避免 data 层依赖具体常量来源 */
-        const val NATURAL = 0
-        const val THREE_QUARTER = 3
+    private fun checkAngle(angle: Int) {
+        require(angle in DisplayRotation.NATURAL..DisplayRotation.THREE_QUARTER) {
+            "非法旋转角度 $angle"
+        }
+    }
 
-        /** 方向重构的稳定等待；仅天然朝向探测用，且每进程最多一次 */
+    private companion object {
+        /** 方向重构的稳定等待；设备稳定时每进程一次，正在转动则每次探测都等 */
         const val SAMPLE_SETTLE_MS = 300L
     }
 }
 ```
+
+并在文件顶部补 `import com.orientlock.domain.DisplayRotation`（`userRotationFor` 是 `OrientationMode` 的枚举成员，**不需要** `import com.orientlock.domain.userRotationFor`——写成扩展函数的 import 解析不了）。
 
 同时把 `app/src/main/java/com/orientlock/data/Preferences.kt` 与 `SettingsOrientationRepository.kt`（Task 7，尚未创建）保留原样。
 
