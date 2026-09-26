@@ -54,8 +54,15 @@ class NotificationHelper(private val context: Context) {
      *
      * @param currentMode 当前模式
      * @param notificationGranted 是否已授予通知权限；未授予时正文明示
+     * @param settingsWritable 是否仍持有「修改系统设置」权限。Repository 先落盘
+     *   用户意图再写入系统，权限一旦被收回，落盘的值仍在而系统实际没锁——
+     *   此时必须如实说「无法锁定」，否则通知在替应用撒谎。
      */
-    fun build(currentMode: OrientationMode, notificationGranted: Boolean): Notification {
+    fun build(
+        currentMode: OrientationMode,
+        notificationGranted: Boolean,
+        settingsWritable: Boolean,
+    ): Notification {
         val openApp = PendingIntent.getActivity(
             context,
             0,
@@ -64,11 +71,15 @@ class NotificationHelper(private val context: Context) {
         )
 
         val locked = currentMode != OrientationMode.AUTO
-        val title = if (locked) "${currentMode.label}锁定中" else "未锁定 · 跟随传感器"
-        val text = if (notificationGranted) {
-            "点按打开 · 用下方按钮快速切换"
-        } else {
-            "通知权限未开启，无法显示此通知"
+        val title = when {
+            locked && !settingsWritable -> "无法锁定 · 权限已失效"
+            locked -> "${currentMode.label}锁定中"
+            else -> "未锁定 · 跟随传感器"
+        }
+        val text = when {
+            !settingsWritable -> "点按打开 · 重新开启「修改系统设置」权限"
+            notificationGranted -> "点按打开 · 用下方按钮快速切换"
+            else -> "通知权限未开启，无法显示此通知"
         }
 
         val reverseTarget = currentMode.reversed()
