@@ -5,6 +5,8 @@ import com.orientlock.domain.NaturalOrientation
 import com.orientlock.domain.OrientationMode
 import com.orientlock.domain.RotationState
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * 全应用唯一的方向写入策略。
@@ -24,8 +26,24 @@ class SystemOrientationWriter(
     @Volatile
     private var cachedNatural: NaturalOrientation? = null
 
+    /** 探测互斥，见 [naturalOrientation] 的说明 */
+    private val probeMutex = Mutex()
+
     /** 是否已获得「修改系统设置」特殊权限 */
     fun canWrite(): Boolean = access.canWrite()
+
+    /**
+     * 天然朝向探测结果。
+     *
+     * @property orientation 本次采到的天然朝向
+     * @property stable 两次采样是否一致。false 表示设备当时正在转动、
+     *   displayMetrics 还没跟上 displayRotation，该值**不可落盘**——
+     *   落盘了就永久错，而且只犯一次错。
+     */
+    data class NaturalOrientationReading(
+        val orientation: NaturalOrientation,
+        val stable: Boolean,
+    )
 
     /**
      * 探测并缓存设备的天然朝向，同一进程内只算一次（取到稳定值才算）。
@@ -40,19 +58,26 @@ class SystemOrientationWriter(
      *
      * 现在改成纯计算，但单次采样仍可能落在方向重构的中间态：
      * displayRotation() 已返回新值而 displayMetrics 还是旧值。
-     * 因此连采两次、间隔 [SAMPLE_SETTLE_MS]，一致才采信并缓存；
-     * 不一致说明设备正在转动，本进程先按第二次的结果用，但不缓存，
-     * 下次调用会重新采样，直到取到稳定值。
+     * 因此连采两次、间隔 [SAMPLE_SETTLE_MS]：
+     * - 一致 → 采信、缓存，[NaturalOrientationReading.stable] 为 true
+     * - 不一致 → 返回第二次的值（让本次调用有数可用），但不缓存，
+     *   [NaturalOrientationReading.stable] 为 false，调用方**不得**把它写进
+     *   DataStore，否则一个被转动的瞬间就会永久定错整个设备的方向映射。
+     *
+     * 探测互斥：[probeMutex] 保证同一进程内只有一个探测在跑。没有它的话，
+     * ViewModel 与前台服务两个作用域可能在 [settle] 的挂起点交错，
+     * 各跑一次探测、各写一次盘，last-writer-wins。
      */
-    suspend fun naturalOrientation(): NaturalOrientation {
-        cachedNatural?.let { return it }
+    suspend fun naturalOrientation(): NaturalOrientationReading = probeMutex.withLock {
+        cachedNatural?.let { return@withLock NaturalOrientationReading(it, true) }
         val first = access.sampleNaturalOrientation()
         settle(SAMPLE_SETTLE_MS)
         val second = access.sampleNaturalOrientation()
-        if (first == second) {
+        val stable = first == second
+        if (stable) {
             cachedNatural = second
         }
-        return second
+        NaturalOrientationReading(second, stable)
     }
 
     fun readState(): RotationState =
@@ -65,12 +90,14 @@ class SystemOrientationWriter(
      * 应用一个方向模式。
      *
      * @param mode 目标模式
-     * @param natural 天然朝向，用于把模式换算成系统角度值
+     * @param natural 天然朝向。仅固定角度模式需要，[OrientationMode.AUTO] 可传 null——
+     *   它的分支只开自动旋转开关，不读这个值；传 null 是为了让调用方
+     *   （尤其是解锁路径）不必先跑一遍天然朝向探测。
      * @param pinnedRotationForCurrent 选中 [OrientationMode.CURRENT] 时要固定的角度
      */
     fun apply(
         mode: OrientationMode,
-        natural: NaturalOrientation,
+        natural: NaturalOrientation?,
         pinnedRotationForCurrent: Int,
     ) {
         when (mode) {
@@ -85,8 +112,9 @@ class SystemOrientationWriter(
             }
 
             else -> {
-                val angle = mode.userRotationFor(natural)
-                    ?: error("模式 $mode 不是固定角度模式")
+                val angle = mode.userRotationFor(
+                    requireNotNull(natural) { "固定角度模式需要天然朝向，AUTO 才可传 null" }
+                ) ?: error("模式 $mode 不是固定角度模式")
                 // 顺序有意为之：auto:off 必须先于 angle:。
                 // 自动旋转开启时窗口管理器会用传感器值覆盖 USER_ROTATION，
                 // 先关掉才能让写入的角度一次确定地生效。

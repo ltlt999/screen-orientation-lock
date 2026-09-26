@@ -114,14 +114,33 @@ class SystemOrientationWriterTest {
         access.reportNatural(NaturalOrientation.LANDSCAPE)
         val (writer) = writerOf(access)
 
-        val first = writer.naturalOrientation()
+        val first = writer.naturalOrientation().orientation
         val samplesAfterFirst = access.sampleCalls
         access.reportNatural(NaturalOrientation.PORTRAIT)
-        val second = writer.naturalOrientation()
+        val second = writer.naturalOrientation().orientation
 
         assertEquals(NaturalOrientation.LANDSCAPE, first)
         assertEquals("缓存后不应重新采样", first, second)
         assertEquals("第二次调用走了缓存、没有重新采样", 0, access.sampleCalls - samplesAfterFirst)
+    }
+
+    @Test
+    fun `两次采样不一致时结果标记为不稳定`() = runTest {
+        val access = FakeOrientationAccess()
+        val (writer) = writerOf(access)
+
+        access.reportNaturalOnce(NaturalOrientation.PORTRAIT, NaturalOrientation.LANDSCAPE)
+
+        assertFalse(writer.naturalOrientation().stable)
+    }
+
+    @Test
+    fun `两次采样一致时结果标记为稳定`() = runTest {
+        val access = FakeOrientationAccess()
+        access.reportNatural(NaturalOrientation.LANDSCAPE)
+        val (writer) = writerOf(access)
+
+        assertTrue(writer.naturalOrientation().stable)
     }
 
     @Test
@@ -141,13 +160,13 @@ class SystemOrientationWriterTest {
         val (writer) = writerOf(access)
 
         access.reportNaturalOnce(NaturalOrientation.PORTRAIT, NaturalOrientation.LANDSCAPE)
-        val observed = writer.naturalOrientation()
+        val observed = writer.naturalOrientation().orientation
         assertEquals("不一致时以第二次为准", NaturalOrientation.LANDSCAPE, observed)
         assertEquals(2, access.sampleCalls)
 
         val samplesBefore = access.sampleCalls
         access.reportNatural(NaturalOrientation.PORTRAIT)
-        val again = writer.naturalOrientation()
+        val again = writer.naturalOrientation().orientation
 
         // 关键：第二次调用必须真的重新采样（样本数 +2），
         // 而不是返回上一次缓存的结果。若缓存守卫被删掉，这里会是 +0。
