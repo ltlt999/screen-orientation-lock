@@ -2170,7 +2170,7 @@ class OrientationService : Service() {
         instanceRef = WeakReference(this)
         repository = SettingsOrientationRepository(
             dataStore = applicationContext.settingsDataStore,
-            writer = SystemOrientationWriter(applicationContext),
+            writer = SystemOrientationWriter(AndroidOrientationAccess(applicationContext)),
         )
         notifications = NotificationHelper(this)
         notifications.ensureChannel()
@@ -2560,7 +2560,7 @@ class BootReceiver : BroadcastReceiver() {
             try {
                 val repository = SettingsOrientationRepository(
                     dataStore = appContext.settingsDataStore,
-                    writer = SystemOrientationWriter(appContext),
+                    writer = SystemOrientationWriter(AndroidOrientationAccess(appContext)),
                 )
                 if (repository.snapshot().autoStartOnBoot) {
                     OrientLockApp.startOrientationServiceSafely(appContext)
@@ -2947,7 +2947,7 @@ class MainViewModel(
                 MainViewModel(
                     repository = SettingsOrientationRepository(
                         dataStore = application.settingsDataStore,
-                        writer = SystemOrientationWriter(application),
+                        writer = SystemOrientationWriter(AndroidOrientationAccess(application)),
                     ),
                     permissions = AndroidPermissionChecker(application),
                     services = AndroidServiceGateway(application),
