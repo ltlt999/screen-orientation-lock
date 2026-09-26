@@ -59,6 +59,8 @@ class MainViewModelTest {
         val vm = createViewModel()
         subscribeTo(vm)
 
+        // isLoaded 是关键：没有它，这条断言只靠 MainUiState() 的占位默认值也能绿
+        assertTrue(vm.uiState.value.isLoaded)
         assertEquals(OrientationMode.AUTO, vm.uiState.value.settings.mode)
     }
 
@@ -78,6 +80,7 @@ class MainViewModelTest {
         val vm = createViewModel()
         subscribeTo(vm)
 
+        assertTrue(vm.uiState.value.isLoaded)
         val settings = vm.uiState.value.settings
         assertTrue(settings.autoStartOnBoot)
         assertTrue(settings.persistentNotification)
@@ -89,6 +92,7 @@ class MainViewModelTest {
         val vm = createViewModel()
         subscribeTo(vm)
 
+        assertTrue(vm.uiState.value.isLoaded)
         assertEquals(null, vm.uiState.value.settings.naturalOrientation)
     }
 
@@ -114,6 +118,8 @@ class MainViewModelTest {
 
         assertTrue(repository.modeHistory.isEmpty())
         assertEquals(0, services.startCalls)
+        // canWriteSettings=false 同时也是 MainUiState() 的默认值，靠 isLoaded 排除假绿
+        assertTrue(vm.uiState.value.isLoaded)
         assertFalse(vm.uiState.value.canWriteSettings)
     }
 
@@ -126,6 +132,8 @@ class MainViewModelTest {
 
         val settings = repository.awaitSettings { it.mode == OrientationMode.LANDSCAPE }
         assertEquals(OrientationMode.LANDSCAPE, settings.mode)
+        // 原名只断言了 fake，这里补上对 uiState 的断言，让用例名副实归
+        assertEquals(OrientationMode.LANDSCAPE, vm.uiState.value.settings.mode)
     }
 
     @Test
