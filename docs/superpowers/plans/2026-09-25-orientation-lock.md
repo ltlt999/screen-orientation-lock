@@ -875,11 +875,15 @@ git commit -m "feat: 守护偏离判定"
 ## Task 5: 自绘矢量图标
 
 **Files:**
-- Create: `app/src/main/res/drawable/` 下 10 个矢量图
+- Create: `app/src/main/res/drawable/` 下 12 个矢量图
 
-统一规格：24×24dp 视口、白色填充（`android:fillColor="#FFFFFFFF"`），由调用方通过 `tint` 着色。
+**规格约定（全部统一）：**
+- 视口 24×24dp，`android:width="24dp" android:height="24dp"`
+- 颜色一律 `#FFFFFFFF`，由调用方用 `tint` 着色
+- **改用描边式绘制**（`android:strokeColor` + `android:strokeWidth`）。原设计用非零环绕规则挖孔画轮廓，那套写法对子路径方向极敏感，手写极易变成实心块；描边式不依赖子路径方向，形态必然正确
+- 方向图标的设计语义：**外框形状区分竖屏（高瘦）/ 横屏（宽扁），内部箭头方向区分正向 / 反向**——这样四种方向一眼可辨
 
-- [ ] **Step 1: 模式图标 —— 竖屏**
+- [ ] **Step 1: 模式图标 —— 竖屏**（高瘦外框 + 向下箭头）
 
 创建 `app/src/main/res/drawable/ic_mode_portrait.xml`：
 
@@ -887,14 +891,20 @@ git commit -m "feat: 守护偏离判定"
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M7,2h10a2,2 0 0 1 2,2v16a2,2 0 0 1 -2,2H7a2,2 0 0 1 -2,-2V4a2,2 0 0 1 2,-2zM7,4v16h10V4H7z" />
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M11,7h2v8h-2z" />
+    <path
+        android:pathData="M8,3.5h8a2,2 0 0 1 2,2v13a2,2 0 0 1 -2,2H8a2,2 0 0 1 -2,-2v-13a2,2 0 0 1 2,-2z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.7" />
+    <path
+        android:pathData="M12,8v7M9,12.2l3,3l3,-3"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
 </vector>
 ```
 
-- [ ] **Step 2: 模式图标 —— 反向竖屏**
+- [ ] **Step 2: 模式图标 —— 反向竖屏**（高瘦外框 + 向上箭头）
 
 创建 `app/src/main/res/drawable/ic_mode_portrait_reverse.xml`：
 
@@ -902,14 +912,20 @@ git commit -m "feat: 守护偏离判定"
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M17,2H7a2,2 0 0 0 -2,2v16a2,2 0 0 0 2,2h10a2,2 0 0 0 2,-2V4a2,2 0 0 0 -2,-2zM17,4v16H7V4h10z" />
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M13,17h-2V9h2z" />
+    <path
+        android:pathData="M8,3.5h8a2,2 0 0 1 2,2v13a2,2 0 0 1 -2,2H8a2,2 0 0 1 -2,-2v-13a2,2 0 0 1 2,-2z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.7" />
+    <path
+        android:pathData="M12,16v-7M9,11.8l3,-3l3,3"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
 </vector>
 ```
 
-- [ ] **Step 3: 模式图标 —— 横屏**
+- [ ] **Step 3: 模式图标 —— 横屏**（宽扁外框 + 向右箭头）
 
 创建 `app/src/main/res/drawable/ic_mode_landscape.xml`：
 
@@ -917,14 +933,20 @@ git commit -m "feat: 守护偏离判定"
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M2,7h16a2,2 0 0 1 2,2v6a2,2 0 0 1 -2,2H2a2,2 0 0 1 -2,-2V9a2,2 0 0 1 2,-2zM2,9v6h16V9H2z" />
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M7,11v2h8v-2z" />
+    <path
+        android:pathData="M5,8h14a2,2 0 0 1 2,2v4a2,2 0 0 1 -2,2H5a2,2 0 0 1 -2,-2v-4a2,2 0 0 1 2,-2z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.7" />
+    <path
+        android:pathData="M8,12h7M12.2,9l3,3l-3,3"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
 </vector>
 ```
 
-- [ ] **Step 4: 模式图标 —— 反向横屏**
+- [ ] **Step 4: 模式图标 —— 反向横屏**（宽扁外框 + 向左箭头）
 
 创建 `app/src/main/res/drawable/ic_mode_landscape_reverse.xml`：
 
@@ -932,14 +954,20 @@ git commit -m "feat: 守护偏离判定"
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M6,7h16a2,2 0 0 1 2,2v6a2,2 0 0 1 -2,2H6a2,2 0 0 1 -2,-2V9a2,2 0 0 1 2,-2zM8,9v6h12V9H8z" />
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M9,11v2H17v-2z" />
+    <path
+        android:pathData="M5,8h14a2,2 0 0 1 2,2v4a2,2 0 0 1 -2,2H5a2,2 0 0 1 -2,-2v-4a2,2 0 0 1 2,-2z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.7" />
+    <path
+        android:pathData="M16,12h-7M11.8,9l-3,3l3,3"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
 </vector>
 ```
 
-- [ ] **Step 5: 模式图标 —— 当前方向**
+- [ ] **Step 5: 模式图标 —— 当前方向**（同心圆 + 指针）
 
 创建 `app/src/main/res/drawable/ic_mode_current.xml`：
 
@@ -947,14 +975,23 @@ git commit -m "feat: 守护偏离判定"
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M12,2a10,10 0 1 0 0.001,0zM12,4a8,8 0 1 1 -0.001,0z" />
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M12,6l4,6h-3v6h-2v-6H8z" />
+    <path
+        android:pathData="M3.2,12a8.8,8.8 0 1 1 17.6,0a8.8,8.8 0 1 1 -17.6,0z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.7" />
+    <path
+        android:pathData="M7.6,12a4.4,4.4 0 1 1 8.8,0a4.4,4.4 0 1 1 -8.8,0z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.5" />
+    <path
+        android:pathData="M12,9.8v4.4"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.7"
+        android:strokeLineCap="round" />
 </vector>
 ```
 
-- [ ] **Step 6: 模式图标 —— 自动**
+- [ ] **Step 6: 模式图标 —— 自动**（双向循环箭头，跟随传感器）
 
 创建 `app/src/main/res/drawable/ic_mode_auto.xml`：
 
@@ -962,85 +999,146 @@ git commit -m "feat: 守护偏离判定"
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M12,5V2L8,6l4,4V7a5,5 0 1 1 -5,5H5a7,7 0 1 0 7,-7z" />
+    <!-- 上半圈：从左侧顶点顺时针过顶端到右侧顶点 -->
+    <path
+        android:pathData="M6,12A6,6 0 0 1 18,12"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round" />
+    <!-- 下半圈：从右侧顶点顺时针过底端回左侧顶点 -->
+    <path
+        android:pathData="M18,12A6,6 0 0 1 6,12"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round" />
+    <!-- 右端箭头，指向下（顺时针行进方向） -->
+    <path
+        android:pathData="M15.8,9.5L18,12l2.2,-2.5"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <!-- 左端箭头，指向上 -->
+    <path
+        android:pathData="M8.2,14.5L6,12l-2.2,2.5"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
 </vector>
 ```
 
 - [ ] **Step 7: 设置行图标三个**
 
-创建 `app/src/main/res/drawable/ic_setting_boot.xml`：
+创建 `app/src/main/res/drawable/ic_setting_boot.xml`（电源符号：顶部断口的圆 + 竖线）：
 
 ```xml
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M7,2h10v2h2v4h-2v2h-2V8H9v10h4v2H7v-2H5V8h2V6h0V2zM7,6H5v2h2V6z" />
+    <path
+        android:pathData="M6.343,6.343A8,8 0 1 1 17.657,6.343"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.9"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M12,3.2V12"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.9"
+        android:strokeLineCap="round" />
 </vector>
 ```
 
-创建 `app/src/main/res/drawable/ic_setting_notification.xml`：
+创建 `app/src/main/res/drawable/ic_setting_notification.xml`（铃铛 + 铃舌）：
 
 ```xml
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M12,2a6,6 0 0 0 -6,6v5l-2,3v1h16v-1l-2,-3V8a6,6 0 0 0 -6,-6zM10,19a2,2 0 0 0 4,0z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,2.8a5.6,5.6 0 0 0 -5.6,5.6v4.4l-2,3.2h15.2l-2,-3.2V8.4A5.6,5.6 0 0 0 12,2.8z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M9.8,18.4a2.4,2.4 0 0 0 4.4,0z" />
 </vector>
 ```
 
-创建 `app/src/main/res/drawable/ic_setting_guard.xml`：
+创建 `app/src/main/res/drawable/ic_setting_guard.xml`（盾牌 + 对勾）：
 
 ```xml
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M12,2l8,3v7c0,4.5 -3.2,8.6 -8,10 -4.8,-1.4 -8,-5.5 -8,-10V5zM12,4.2L6,6.4V12c0,3.4 2.4,6.5 6,7.8 3.6,-1.3 6,-4.4 6,-7.8V6.4z" />
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M11,8h2v5h-2zM11,14h2v2h-2z" />
+    <path
+        android:pathData="M12,2.6l7.4,2.8v5.6c0,4.6 -3.1,7.9 -7.4,9.4 -4.3,-1.5 -7.4,-4.8 -7.4,-9.4V5.4z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M8.8,11.8l2.4,2.4 4,-4.4"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
 </vector>
 ```
 
 - [ ] **Step 8: 杂项图标三个**
 
-创建 `app/src/main/res/drawable/ic_warning.xml`：
+创建 `app/src/main/res/drawable/ic_warning.xml`（三角 + 感叹号，感叹点用零长圆头路径绘制）：
 
 ```xml
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M12,2l10,18H2zM12,6.5L5.3,18h13.4z" />
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M11,9h2v5h-2zM11,15h2v2h-2z" />
+    <path
+        android:pathData="M12,3.2L21.4,19.6H2.6z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M12,9.2v4.6"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M12,16.6v0.1"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round" />
 </vector>
 ```
 
-创建 `app/src/main/res/drawable/ic_rom.xml`：
+创建 `app/src/main/res/drawable/ic_rom.xml`（手机 + 列表行）：
 
 ```xml
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M6,2h12a2,2 0 0 1 2,2v16a2,2 0 0 1 -2,2H6a2,2 0 0 1 -2,-2V4a2,2 0 0 1 2,-2zM6,4v16h12V4H6z" />
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M9,7h6v2H9zM9,11h6v2H9z" />
+    <path
+        android:pathData="M7,2.6h10a2,2 0 0 1 2,2v14.8a2,2 0 0 1 -2,2H7a2,2 0 0 1 -2,-2V4.6a2,2 0 0 1 2,-2z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.7" />
+    <path
+        android:pathData="M9,7.6h6M9,11h6M9,14.4h4"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.7"
+        android:strokeLineCap="round" />
 </vector>
 ```
 
-创建 `app/src/main/res/drawable/ic_notification_orientation.xml`（通知栏状态栏小图标，必须纯白单色）：
+创建 `app/src/main/res/drawable/ic_notification_orientation.xml`（状态栏小图标，只取透明度，需为纯白剪影）：
 
 ```xml
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M7,2h10a2,2 0 0 1 2,2v16a2,2 0 0 1 -2,2H7a2,2 0 0 1 -2,-2V4a2,2 0 0 1 2,-2zM7,4v16h10V4H7z" />
-    <path android:fillColor="#FFFFFFFF"
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M7,2h10a2,2 0 0 1 2,2v16a2,2 0 0 1 -2,2H7a2,2 0 0 1 -2,-2V4a2,2 0 0 1 2,-2z" />
+    <path
+        android:fillColor="#FFFFFFFF"
         android:pathData="M11,6h2v12h-2z" />
 </vector>
 ```
