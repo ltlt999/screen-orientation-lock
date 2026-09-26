@@ -15,8 +15,7 @@ import com.orientlock.domain.naturalOrientationFrom
  * 锁定一个方向必须同时做两件事：先关闭自动旋转，再写入目标角度。
  * 只写角度而不关自动旋转无效——自动旋转开启时系统忽略 USER_ROTATION。
  *
- * 天然朝向探测有副作用（会临时改写系统设置），因此 [naturalOrientation] 会把结果
- * 缓存在内存里，整个进程只探测一次。
+ * 天然朝向探测无副作用，结果缓存在内存里，整个进程只算一次。
  */
 class SystemOrientationWriter(private val context: Context) {
 
@@ -30,16 +29,19 @@ class SystemOrientationWriter(private val context: Context) {
     /**
      * 探测并缓存设备的天然朝向，同一进程内只探测一次。
      *
-     * 做法：把 USER_ROTATION 短暂置 0（同时关掉自动旋转），此时设备必然处于天然
-     * 朝向，读一次屏幕宽高即可判定。平板天然横屏，与手机的映射不同，
-     * 不区分会导致锁出来的方向在平板和折叠屏上是反的。
+     * 做法：直接由「当前逻辑宽高 + 当前旋转角」反推，不改写任何系统设置。
+     *
+     * 早先的设计是先把 USER_ROTATION 置 0 再读宽高，那有三个问题：
+     * 一是留下「自动旋转被悄悄关掉」的副作用；二是旋转重构是异步的，
+     * 紧接着读到的可能还是旧方向的宽高；三是这个结果会被持久化，
+     * 判错就永久错——它还会连带把 OrientationMode.CURRENT
+     * 的固定角度污染成永远 0。当前实现三条一并消除。
      */
     fun naturalOrientation(): NaturalOrientation {
         cachedNatural?.let { return it }
-        applyAutoRotate(false)
-        applyUserRotation(Surface.ROTATION_0)
+        val rotation = displayRotation()
         val metrics = context.resources.displayMetrics
-        return naturalOrientationFrom(metrics.widthPixels, metrics.heightPixels)
+        return naturalOrientationFrom(metrics.widthPixels, metrics.heightPixels, rotation)
             .also { cachedNatural = it }
     }
 
