@@ -461,17 +461,43 @@ class NaturalOrientationTest {
 
     @Test
     fun `高大于宽时为天然竖屏`() {
-        assertEquals(NaturalOrientation.PORTRAIT, naturalOrientationFrom(1080, 2400))
+        assertEquals(NaturalOrientation.PORTRAIT, naturalOrientationFrom(1080, 2400, 0))
     }
 
     @Test
     fun `宽大于高时为天然横屏`() {
-        assertEquals(NaturalOrientation.LANDSCAPE, naturalOrientationFrom(2400, 1080))
+        assertEquals(NaturalOrientation.LANDSCAPE, naturalOrientationFrom(2400, 1080, 0))
+    }
+
+    @Test
+    @Test
+    fun `旋转为 2 时宽高未互换仍按天然宽高判定`() {
+        assertEquals(NaturalOrientation.PORTRAIT, naturalOrientationFrom(1080, 2400, 2))
+        assertEquals(NaturalOrientation.LANDSCAPE, naturalOrientationFrom(2400, 1080, 2))
+    }
+
+    @Test
+    fun `旋转为 1 时宽高互换竖屏设备横持仍判为竖屏`() {
+        // 手机被横持：逻辑宽高报成 2400x1080，但天然朝向仍是竖屏
+        assertEquals(NaturalOrientation.PORTRAIT, naturalOrientationFrom(2400, 1080, 1))
+    }
+
+    @Test
+    fun `旋转为 1 时宽高互换横屏设备竖持仍判为横屏`() {
+        // 平板被竖持：逻辑宽高报成 1080x2400，但天然朝向仍是横屏
+        assertEquals(NaturalOrientation.LANDSCAPE, naturalOrientationFrom(1080, 2400, 1))
+    }
+
+    @Test
+    fun `旋转为 3 时与旋转为 1 判定一致`() {
+        assertEquals(NaturalOrientation.PORTRAIT, naturalOrientationFrom(2400, 1080, 3))
+        assertEquals(NaturalOrientation.LANDSCAPE, naturalOrientationFrom(1080, 2400, 3))
     }
 
     @Test
     fun `宽高相等时按竖屏处理`() {
-        assertEquals(NaturalOrientation.PORTRAIT, naturalOrientationFrom(1200, 1200))
+        assertEquals(NaturalOrientation.PORTRAIT, naturalOrientationFrom(1200, 1200, 0))
+        assertEquals(NaturalOrientation.PORTRAIT, naturalOrientationFrom(1200, 1200, 1))
     }
 }
 ```
@@ -505,17 +531,52 @@ enum class NaturalOrientation {
 }
 
 /**
- * 依据屏幕实际宽高判定天然朝向。
+ * 与 android.view.Surface.ROTATION_* 等值的显示旋转角。
  *
- * 只在设备处于天然朝向时（即 USER_ROTATION 为 0 时）调用才有意义。
- * 两者相等时按竖屏处理：方形屏幕的设备上竖屏是更贴近直觉的默认。
- *
- * @param widthPx 天然朝向下屏幕的实际像素宽
- * @param heightPx 天然朝向下屏幕的实际像素高
+ * 放在 domain 层，是为了让 [naturalOrientationFrom] 保持纯 Kotlin、
+ * 能脱离安卓框架做单元测试。调用方（SystemOrientationWriter）
+ * 直接把 Display.getRotation() 的返回值传进来，取值自然一致。
  */
-fun naturalOrientationFrom(widthPx: Int, heightPx: Int): NaturalOrientation =
-    if (heightPx >= widthPx) NaturalOrientation.PORTRAIT else NaturalOrientation.LANDSCAPE
+object DisplayRotation {
+    const val NATURAL = 0
+    const val QUARTER = 1
+    const val HALF = 2
+    const val THREE_QUARTER = 3
+}
+
+/**
+ * 依据当前逻辑宽高与实际旋转角，反推设备的天然朝向。
+ *
+ * 为什么必须带旋转角：`displayMetrics` 报的是**当前旋转之后**的逻辑宽高。
+ * 旋转为 [DisplayRotation.NATURAL] 或 [DisplayRotation.HALF] 时，逻辑宽高就是天然宽高；
+ * 旋转为 [DisplayRotation.QUARTER] 或 [DisplayRotation.THREE_QUARTER] 时，两者互换。
+ *
+ * 这样不需要强制改写系统设置把设备"摆正"再测量，因此没有任何副作用，
+ * 也不依赖旋转重构的完成时机。
+ *
+ * @param widthPx 当前逻辑显示宽（像素）
+ * @param heightPx 当前逻辑显示高（像素）
+ * @param rotation 当前实际旋转角，取 [DisplayRotation] 之一
+ */
+fun naturalOrientationFrom(
+    widthPx: Int,
+    heightPx: Int,
+    rotation: Int,
+): NaturalOrientation {
+    val naturalIsPortrait = when (rotation) {
+        DisplayRotation.NATURAL,
+        DisplayRotation.HALF -> heightPx >= widthPx
+
+        DisplayRotation.QUARTER,
+        DisplayRotation.THREE_QUARTER -> widthPx >= heightPx
+
+        else -> heightPx >= widthPx
+    }
+    return if (naturalIsPortrait) NaturalOrientation.PORTRAIT else NaturalOrientation.LANDSCAPE
+}
 ```
+
+> **为什么不用"先强制摆正再测量"。** 早先的设计是调用方先把 `USER_ROTATION` 置 0、关掉自动旋转，再读宽高。那有三个问题：① 会留下"自动旋转被悄悄关掉"的副作用；② 旋转重构是异步的，紧接着读到的可能还是旧方向的宽高；③ 这个结果会被持久化，判错就永久错——而且它还会连带把 `OrientationMode.CURRENT` 的固定角度污染成永远 0。当前实现把判定变成纯函数，三条一并消失。
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -1180,8 +1241,7 @@ import com.orientlock.domain.naturalOrientationFrom
  * 锁定一个方向必须同时做两件事：先关闭自动旋转，再写入目标角度。
  * 只写角度而不关自动旋转无效——自动旋转开启时系统忽略 USER_ROTATION。
  *
- * 天然朝向探测有副作用（会临时改写系统设置），因此 [naturalOrientation] 会把结果
- * 缓存在内存里，整个进程只探测一次。
+ * 天然朝向探测无副作用，结果缓存在内存里，整个进程只算一次。
  */
 class SystemOrientationWriter(private val context: Context) {
 
@@ -1195,16 +1255,19 @@ class SystemOrientationWriter(private val context: Context) {
     /**
      * 探测并缓存设备的天然朝向，同一进程内只探测一次。
      *
-     * 做法：把 USER_ROTATION 短暂置 0（同时关掉自动旋转），此时设备必然处于天然
-     * 朝向，读一次屏幕宽高即可判定。平板天然横屏，与手机的映射不同，
-     * 不区分会导致锁出来的方向在平板和折叠屏上是反的。
+     * 做法：直接由「当前逻辑宽高 + 当前旋转角」反推，不改写任何系统设置。
+     *
+     * 早先的设计是先把 USER_ROTATION 置 0 再读宽高，那有三个问题：
+     * 一是留下「自动旋转被悄悄关掉」的副作用；二是旋转重构是异步的，
+     * 紧接着读到的可能还是旧方向的宽高；三是这个结果会被持久化，
+     * 判错就永久错——它还会连带把 OrientationMode.CURRENT
+     * 的固定角度污染成永远 0。当前实现三条一并消除。
      */
     fun naturalOrientation(): NaturalOrientation {
         cachedNatural?.let { return it }
-        applyAutoRotate(false)
-        applyUserRotation(Surface.ROTATION_0)
+        val rotation = displayRotation()
         val metrics = context.resources.displayMetrics
-        return naturalOrientationFrom(metrics.widthPixels, metrics.heightPixels)
+        return naturalOrientationFrom(metrics.widthPixels, metrics.heightPixels, rotation)
             .also { cachedNatural = it }
     }
 
