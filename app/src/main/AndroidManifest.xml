@@ -10,6 +10,19 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+      安卓 11 起重启了包可见性限制：不声明 <queries> 的话，
+      PermissionIntents.romAutoStart() 的 queryIntentActivities 只会返回空，
+      「系统适配」卡片就永远回落到应用详情页——而它恰恰是为这几家 ROM 准备的。
+      只声明要用到的 OEM 设置组件所在包，不泛泛放开全部应用。
+    -->
+    <queries>
+        <package android:name="com.miui.securitycenter" />
+        <package android:name="com.huawei.systemmanager" />
+        <package android:name="com.coloros.safecenter" />
+        <package android:name="com.vivo.permissionmanager" />
+    </queries>
+
     <application
         android:name=".OrientLockApp"
         android:allowBackup="true"

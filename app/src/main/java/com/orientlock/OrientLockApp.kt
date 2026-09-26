@@ -3,7 +3,6 @@ package com.orientlock
 import android.app.Application
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
@@ -46,12 +45,8 @@ class OrientLockApp : Application() {
         }
 
         private fun startNow(context: Context) {
-            val intent = Intent(context, OrientationService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            // minSdk 26，startForegroundService 一直可用，不需要版本分支
+            context.startForegroundService(Intent(context, OrientationService::class.java))
         }
 
         private const val WORK_NAME = "orientation-service-start"
@@ -66,12 +61,10 @@ class BootRetryWorker(
 
     override suspend fun doWork(): Result {
         return try {
-            val intent = Intent(applicationContext, OrientationService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                applicationContext.startForegroundService(intent)
-            } else {
-                applicationContext.startService(intent)
-            }
+            // minSdk 26，startForegroundService 一直可用，不需要版本分支
+            applicationContext.startForegroundService(
+                Intent(applicationContext, OrientationService::class.java)
+            )
             Result.success()
         } catch (e: IllegalStateException) {
             Result.retry()
