@@ -1066,7 +1066,6 @@ git add app/src/main/res/drawable/ && git commit -m "feat: 自绘矢量图标（
 package com.orientlock.data
 
 import android.content.Context
-import android.content.pm.ActivityInfo
 import android.os.Build
 import android.provider.Settings
 import android.view.Surface
@@ -1168,14 +1167,6 @@ class SystemOrientationWriter(private val context: Context) {
             "非法旋转角度 $angle"
         }
         Settings.System.putInt(resolver, Settings.System.USER_ROTATION, angle)
-    }
-
-    /** 把系统角度值换算成 Activity 可用的 screenOrientation 常量（供调试） */
-    fun activityScreenOrientation(angle: Int): Int = when (angle) {
-        Surface.ROTATION_0 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        Surface.ROTATION_90 -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-        Surface.ROTATION_180 -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
-        else -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
     }
 }
 ```
@@ -1501,7 +1492,7 @@ class NotificationHelper(private val context: Context) {
         }
 
         val reverseTarget = currentMode.reversed()
-            .takeIf { it != OrientationMode.AUTO }
+            .takeIf { it != OrientationMode.AUTO && it != OrientationMode.CURRENT }
             ?: OrientationMode.PORTRAIT_REVERSE
 
         return NotificationCompat.Builder(context, CHANNEL_ID)
