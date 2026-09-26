@@ -1,5 +1,6 @@
 package com.orientlock.data
 
+import com.orientlock.domain.DisplayRotation
 import com.orientlock.domain.NaturalOrientation
 import com.orientlock.domain.OrientationMode
 import com.orientlock.domain.RotationState
@@ -86,6 +87,9 @@ class SystemOrientationWriter(
             else -> {
                 val angle = mode.userRotationFor(natural)
                     ?: error("模式 $mode 不是固定角度模式")
+                // 顺序有意为之：auto:off 必须先于 angle:。
+                // 自动旋转开启时窗口管理器会用传感器值覆盖 USER_ROTATION，
+                // 先关掉才能让写入的角度一次确定地生效。
                 access.writeAutoRotate(false)
                 writeUserRotation(angle)
             }
@@ -98,15 +102,13 @@ class SystemOrientationWriter(
     }
 
     private fun checkAngle(angle: Int) {
-        require(angle in NATURAL..THREE_QUARTER) { "非法旋转角度 $angle" }
+        require(angle in DisplayRotation.NATURAL..DisplayRotation.THREE_QUARTER) {
+            "非法旋转角度 $angle"
+        }
     }
 
     private companion object {
-        /** 与 android.view.Surface.ROTATION_* 等值 */
-        const val NATURAL = 0
-        const val THREE_QUARTER = 3
-
-        /** 方向重构的稳定等待；仅天然朝向探测用，且每进程最多一次 */
+        /** 方向重构的稳定等待；设备稳定时每进程一次，正在转动则每次探测都等 */
         const val SAMPLE_SETTLE_MS = 300L
     }
 }

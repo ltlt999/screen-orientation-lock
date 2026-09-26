@@ -115,11 +115,24 @@ class SystemOrientationWriterTest {
         val (writer) = writerOf(access)
 
         val first = writer.naturalOrientation()
+        val samplesAfterFirst = access.sampleCalls
         access.reportNatural(NaturalOrientation.PORTRAIT)
         val second = writer.naturalOrientation()
 
         assertEquals(NaturalOrientation.LANDSCAPE, first)
         assertEquals("缓存后不应重新采样", first, second)
+        assertEquals("第二次调用走了缓存、没有重新采样", 0, access.sampleCalls - samplesAfterFirst)
+    }
+
+    @Test
+    fun `两次采样之间等待稳定间隔`() = runTest {
+        val access = FakeOrientationAccess()
+        val settled = mutableListOf<Long>()
+        val writer = SystemOrientationWriter(access) { settled += it }
+
+        writer.naturalOrientation()
+
+        assertEquals(listOf(300L), settled)
     }
 
     @Test
@@ -130,10 +143,16 @@ class SystemOrientationWriterTest {
         access.reportNaturalOnce(NaturalOrientation.PORTRAIT, NaturalOrientation.LANDSCAPE)
         val observed = writer.naturalOrientation()
         assertEquals("不一致时以第二次为准", NaturalOrientation.LANDSCAPE, observed)
+        assertEquals(2, access.sampleCalls)
 
-        access.reportNatural(NaturalOrientation.LANDSCAPE)
+        val samplesBefore = access.sampleCalls
+        access.reportNatural(NaturalOrientation.PORTRAIT)
         val again = writer.naturalOrientation()
-        assertEquals("未缓存所以重新采样", NaturalOrientation.LANDSCAPE, again)
+
+        // 关键：第二次调用必须真的重新采样（样本数 +2），
+        // 而不是返回上一次缓存的结果。若缓存守卫被删掉，这里会是 +0。
+        assertEquals("未缓存所以重新采样", NaturalOrientation.PORTRAIT, again)
+        assertEquals(2, access.sampleCalls - samplesBefore)
     }
 
     @Test
@@ -146,9 +165,10 @@ class SystemOrientationWriterTest {
 
     @Test
     fun `权限查询转交平台实现`() = runTest {
-        val access = FakeOrientationAccess(canWriteResult = false)
-        val (writer) = writerOf(access)
+        val granted = FakeOrientationAccess(canWriteResult = true)
+        assertTrue(writerOf(granted).first.canWrite())
 
-        assertFalse(writer.canWrite())
+        val denied = FakeOrientationAccess(canWriteResult = false)
+        assertFalse(writerOf(denied).first.canWrite())
     }
 }

@@ -12,6 +12,9 @@ class FakeOrientationAccess(
     /** 按发生顺序记录的写操作，形如 "auto:on" / "auto:off" / "angle:1" */
     val writes = mutableListOf<String>()
 
+    /** sampleNaturalOrientation() 被调用的次数，用于断言是否发生了重新采样 */
+    var sampleCalls = 0
+
     private var autoRotateOn = true
 
     /** 待返回的「天然朝向」采样队列；见 [reportNaturalOnce] */
@@ -36,9 +39,11 @@ class FakeOrientationAccess(
     override fun displayRotation(): Int = rotation
 
     /** 队列里还有多个值就逐个发完，之后一直重复最后一个 */
-    override fun sampleNaturalOrientation(): NaturalOrientation =
-        if (naturalSamples.size > 1) naturalSamples.removeFirst()
+    override fun sampleNaturalOrientation(): NaturalOrientation {
+        sampleCalls++
+        return if (naturalSamples.size > 1) naturalSamples.removeFirst()
         else naturalSamples.lastOrNull() ?: NaturalOrientation.PORTRAIT
+    }
 
     /** 之后所有采样都返回同一个值 */
     fun reportNatural(value: NaturalOrientation) {
