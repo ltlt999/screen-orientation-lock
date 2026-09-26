@@ -58,8 +58,16 @@ fun PhonePreview(
     val rotation = remember { Animatable(0f) }
 
     LaunchedEffect(targetDegrees) {
+        // 按最短路径旋转。 Animatable 里存的是累计角度，直接 animateTo(绝对目标) 的话，
+        // 从 270°（反向横屏）切到 0°（竖屏）会倒退四分之三圈——用户看着是转了一大圈
+        // 才停。这里先折算目标到离当前最近的一圈内，只走最小转角。
+        val currentMod = ((rotation.value % 360f) + 360f) % 360f
+        var delta = (targetDegrees - currentMod) % 360f
+        if (delta > 180f) delta -= 360f
+        if (delta < -180f) delta += 360f
+
         rotation.animateTo(
-            targetValue = targetDegrees,
+            targetValue = rotation.value + delta,
             animationSpec = spring(
                 dampingRatio = 0.55f,
                 stiffness = Spring.StiffnessLow,
