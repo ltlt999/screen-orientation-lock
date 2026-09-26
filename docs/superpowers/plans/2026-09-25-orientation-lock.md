@@ -1214,81 +1214,405 @@ git add app/src/main/res/drawable/ && git commit -m "feat: 自绘矢量图标（
 
 ---
 
-## Task 6: 系统设置写入器
+## Task 6: 系统方向门与写入器（TDD）
 
 **Files:**
+- Create: `app/src/main/java/com/orientlock/data/SystemOrientationAccess.kt`
 - Create: `app/src/main/java/com/orientlock/data/SystemOrientationWriter.kt`
+- Test: `app/src/test/java/com/orientlock/data/FakeOrientationAccess.kt`
+- Test: `app/src/test/java/com/orientlock/data/SystemOrientationWriterTest.kt`
 
-- [ ] **Step 1: 写实现**
+> **为什么要有 `SystemOrientationAccess` 这个接口。** 这个写入器承载了全应用的方向写入逻辑，是风险最集中的一处，却不能在无 Robolectric 的环境下直接测——它需要 `Context` 才能调 `getSystemService` 和读 `displayMetrics`。把「平台读写」与「写入策略」分开：策略在写入器里、可在 JVM 上测；机制在安卓实现里、薄到不需要测。它的第一版实现就带了两个潜伏缺陷（探测时顺手改系统设置、`Context.getDisplay()` 在 Application 上抛异常），都只能靠昂贵的人工审查才发现。
+>
+> **两处硬性要求，各有一次真实事故驱动：**
+> 1. `displayRotation()` 必须用 `DisplayManager.getDisplay(DEFAULT_DISPLAY)`，**不能用 `Context.getDisplay()`**。后者 API 30 引入，SDK javadoc 明写 `@throws UnsupportedOperationException if the method is called on an instance that is not associated with any display`，本类只会在 Application / Service 上下文中被构造（`OrientLockApp` 与 `BootReceiver`），点在安卓 11+ 上必然崩。
+> 2. `naturalOrientation()` 必须**零系统写入**，且连续采样两次、间隔 300ms 一致才缓存。单次采样可能落在方向重构的中间态（rotation 已变、`displayMetrics` 未变），而这个结果会经 Repository 落盘，判错就永久错。
 
-创建 `app/src/main/java/com/orientlock/data/SystemOrientationWriter.kt`：
+- [ ] **Step 1: 写测试替身**
+
+创建 `app/src/test/java/com/orientlock/data/FakeOrientationAccess.kt`：
+
+```kotlin
+package com.orientlock.data
+
+import com.orientlock.domain.DisplayRotation
+import com.orientlock.domain.NaturalOrientation
+
+/** 记录全部读写操作的测试替身 */
+class FakeOrientationAccess(
+    var canWriteResult: Boolean = true,
+    var rotation: Int = DisplayRotation.NATURAL,
+) : SystemOrientationAccess {
+
+    /** 按发生顺序记录的写操作，形如 "auto:on" / "auto:off" / "angle:1" */
+    val writes = mutableListOf<String>()
+
+    private var autoRotateOn = true
+
+    /** 待返回的「天然朝向」采样队列；见 [reportNaturalOnce] */
+    private val naturalSamples = ArrayDeque<NaturalOrientation>()
+
+    override fun canWrite(): Boolean = canWriteResult
+
+    override fun userRotation(): Int = rotation
+
+    override fun autoRotate(): Boolean = autoRotateOn
+
+    override fun writeAutoRotate(enabled: Boolean) {
+        writes += if (enabled) "auto:on" else "auto:off"
+        autoRotateOn = enabled
+    }
+
+    override fun writeUserRotation(angle: Int) {
+        writes += "angle:$angle"
+        rotation = angle
+    }
+
+    override fun displayRotation(): Int = rotation
+
+    /** 队列里还有多个值就逐个发完，之后一直重复最后一个 */
+    override fun sampleNaturalOrientation(): NaturalOrientation =
+        if (naturalSamples.size > 1) naturalSamples.removeFirst()
+        else naturalSamples.lastOrNull() ?: NaturalOrientation.PORTRAIT
+
+    /** 之后所有采样都返回同一个值 */
+    fun reportNatural(value: NaturalOrientation) {
+        naturalSamples.clear()
+        naturalSamples.addLast(value)
+    }
+
+    /**
+     * 接下来两次采样分别返回 [first] 和 [second]，用于模拟
+     * 「设备正在转动、两次采样取到了不同方向」。
+     */
+    fun reportNaturalOnce(first: NaturalOrientation, second: NaturalOrientation) {
+        naturalSamples.clear()
+        naturalSamples.addLast(first)
+        naturalSamples.addLast(second)
+    }
+}
+```
+
+- [ ] **Step 2: 写失败测试**
+
+创建 `app/src/test/java/com/orientlock/data/SystemOrientationWriterTest.kt`：
+
+```kotlin
+package com.orientlock.data
+
+import com.orientlock.domain.DisplayRotation
+import com.orientlock.domain.NaturalOrientation
+import com.orientlock.domain.OrientationMode
+import com.orientlock.domain.RotationState
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class SystemOrientationWriterTest {
+
+    /** 测试里不真的等待 300ms，settle 传空实现 */
+    private fun writerOf(
+        access: FakeOrientationAccess = FakeOrientationAccess(),
+    ): Pair<SystemOrientationWriter, FakeOrientationAccess> =
+        access to SystemOrientationWriter(access) { }
+
+    @Test
+    fun `锁竖屏时先关自动旋转再写角度 0`() = runTest {
+        val (writer, access) = writerOf()
+
+        writer.apply(OrientationMode.PORTRAIT, NaturalOrientation.PORTRAIT, 0)
+
+        assertEquals(listOf("auto:off", "angle:0"), access.writes)
+    }
+
+    @Test
+    fun `天然横屏设备上锁横屏写角度 0`() = runTest {
+        val (writer, access) = writerOf()
+
+        writer.apply(OrientationMode.LANDSCAPE, NaturalOrientation.LANDSCAPE, 0)
+
+        assertEquals(listOf("auto:off", "angle:0"), access.writes)
+    }
+
+    @Test
+    fun `天然横屏设备上锁竖屏写角度 1`() = runTest {
+        val (writer, access) = writerOf()
+
+        writer.apply(OrientationMode.PORTRAIT, NaturalOrientation.LANDSCAPE, 0)
+
+        assertEquals(listOf("auto:off", "angle:1"), access.writes)
+    }
+
+    @Test
+    fun `锁反向竖屏写角度 2`() = runTest {
+        val (writer, access) = writerOf()
+
+        writer.apply(OrientationMode.PORTRAIT_REVERSE, NaturalOrientation.PORTRAIT, 0)
+
+        assertEquals(listOf("auto:off", "angle:2"), access.writes)
+    }
+
+    @Test
+    fun `自动模式只开自动旋转不写角度`() = runTest {
+        val (writer, access) = writerOf()
+
+        writer.apply(OrientationMode.AUTO, NaturalOrientation.PORTRAIT, 0)
+
+        assertEquals(listOf("auto:on"), access.writes)
+    }
+
+    @Test
+    fun `当前方向模式写入固定角度`() = runTest {
+        val (writer, access) = writerOf()
+
+        writer.apply(OrientationMode.CURRENT, NaturalOrientation.PORTRAIT, 3)
+
+        assertEquals(listOf("auto:off", "angle:3"), access.writes)
+    }
+
+    @Test
+    fun `非法旋转角度被拒绝`() = runTest {
+        val (writer, access) = writerOf()
+
+        val error = runCatching {
+            writer.apply(OrientationMode.CURRENT, NaturalOrientation.PORTRAIT, 4)
+        }.exceptionOrNull()
+
+        assertTrue(error is IllegalArgumentException)
+        assertTrue(access.writes.isEmpty())
+    }
+
+    @Test
+    fun `读取系统状态映射为 RotationState`() = runTest {
+        val access = FakeOrientationAccess(rotation = 2)
+        val (writer) = writerOf(access)
+        access.writeAutoRotate(false)
+
+        assertEquals(
+            RotationState(userRotation = 2, autoRotate = false),
+            writer.readState(),
+        )
+    }
+
+    @Test
+    fun `探测天然朝向不写任何系统设置`() = runTest {
+        val access = FakeOrientationAccess()
+        access.writeAutoRotate(true)
+        access.writes.clear()
+        val (writer) = writerOf(access)
+
+        writer.naturalOrientation()
+
+        assertTrue("探测不得修改系统设置，实际写入了 ${access.writes}", access.writes.isEmpty())
+    }
+
+    @Test
+    fun `两次采样一致时缓存天然朝向`() = runTest {
+        val access = FakeOrientationAccess()
+        access.reportNatural(NaturalOrientation.LANDSCAPE)
+        val (writer) = writerOf(access)
+
+        val first = writer.naturalOrientation()
+        access.reportNatural(NaturalOrientation.PORTRAIT)
+        val second = writer.naturalOrientation()
+
+        assertEquals(NaturalOrientation.LANDSCAPE, first)
+        assertEquals("缓存后不应重新采样", first, second)
+    }
+
+    @Test
+    fun `两次采样不一致时不缓存下次重新采样`() = runTest {
+        val access = FakeOrientationAccess()
+        val (writer) = writerOf(access)
+
+        access.reportNaturalOnce(NaturalOrientation.PORTRAIT, NaturalOrientation.LANDSCAPE)
+        val observed = writer.naturalOrientation()
+        assertEquals("不一致时以第二次为准", NaturalOrientation.LANDSCAPE, observed)
+
+        access.reportNatural(NaturalOrientation.LANDSCAPE)
+        val again = writer.naturalOrientation()
+        assertEquals("未缓存所以重新采样", NaturalOrientation.LANDSCAPE, again)
+    }
+
+    @Test
+    fun `显示旋转角来自平台实现`() = runTest {
+        val access = FakeOrientationAccess(rotation = DisplayRotation.THREE_QUARTER)
+        val (writer) = writerOf(access)
+
+        assertEquals(DisplayRotation.THREE_QUARTER, writer.displayRotation())
+    }
+
+    @Test
+    fun `权限查询转交平台实现`() = runTest {
+        val access = FakeOrientationAccess(canWriteResult = false)
+        val (writer) = writerOf(access)
+
+        assertFalse(writer.canWrite())
+    }
+}
+```
+
+- [ ] **Step 3: 运行测试确认失败**
+
+Run:
+```bash
+cd /e/APP/2026-9-25 && ./gradlew :app:testDebugUnitTest --tests "com.orientlock.data.SystemOrientationWriterTest" --console=plain
+```
+Expected: 编译失败，报 `Unresolved reference: SystemOrientationAccess` / `SystemOrientationWriter`
+
+- [ ] **Step 4: 写平台门**
+
+创建 `app/src/main/java/com/orientlock/data/SystemOrientationAccess.kt`：
 
 ```kotlin
 package com.orientlock.data
 
 import android.content.Context
-import android.os.Build
+import android.hardware.display.DisplayManager
 import android.provider.Settings
+import android.view.Display
 import android.view.Surface
 import com.orientlock.domain.NaturalOrientation
-import com.orientlock.domain.OrientationMode
-import com.orientlock.domain.RotationState
 import com.orientlock.domain.naturalOrientationFrom
 
 /**
- * 唯一接触 Settings.System 的类。
+ * 屏幕方向相关的全部系统读写。
  *
- * 锁定一个方向必须同时做两件事：先关闭自动旋转，再写入目标角度。
- * 只写角度而不关自动旋转无效——自动旋转开启时系统忽略 USER_ROTATION。
- *
- * 天然朝向探测无副作用，结果缓存在内存里，整个进程只算一次。
+ * 把「平台读写」从「写入策略」中分离出来：策略在 [SystemOrientationWriter] 里，
+ * 可在 JVM 上用假实现测试；机制在本类里，薄到不需要测。
  */
-class SystemOrientationWriter(private val context: Context) {
+interface SystemOrientationAccess {
+    fun canWrite(): Boolean
+    fun userRotation(): Int
+    fun autoRotate(): Boolean
+    fun writeAutoRotate(enabled: Boolean)
+    fun writeUserRotation(angle: Int)
+    fun displayRotation(): Int
 
-    private var cachedNatural: NaturalOrientation? = null
+    /** 由当前逻辑宽高与旋转角反推天然朝向；宽高与旋转须取自同一次采样 */
+    fun sampleNaturalOrientation(): NaturalOrientation
+}
+
+/** 走 ContentResolver 与 DisplayManager 的真实实现。 */
+class AndroidOrientationAccess(private val context: Context) : SystemOrientationAccess {
 
     private val resolver get() = context.contentResolver
 
-    /** 是否已获得「修改系统设置」特殊权限 */
-    fun canWriteSettings(): Boolean = Settings.System.canWrite(context)
+    override fun canWrite(): Boolean = Settings.System.canWrite(context)
+
+    override fun userRotation(): Int = Settings.System.getInt(
+        resolver, Settings.System.USER_ROTATION, Surface.ROTATION_0
+    )
+
+    override fun autoRotate(): Boolean = Settings.System.getInt(
+        resolver, Settings.System.ACCELEROMETER_ROTATION, 1
+    ) != 0
+
+    override fun writeAutoRotate(enabled: Boolean) {
+        Settings.System.putInt(
+            resolver,
+            Settings.System.ACCELEROMETER_ROTATION,
+            if (enabled) 1 else 0,
+        )
+    }
+
+    override fun writeUserRotation(angle: Int) {
+        Settings.System.putInt(resolver, Settings.System.USER_ROTATION, angle)
+    }
 
     /**
-     * 探测并缓存设备的天然朝向，同一进程内只探测一次。
+     * 当前实际旋转角。
      *
-     * 做法：直接由「当前逻辑宽高 + 当前旋转角」反推，不改写任何系统设置。
+     * 必须用 DisplayManager 而不是 Context.getDisplay()：后者 API 30 引入，
+     * SDK javadoc 明确写着「not associated with any display」时抛
+     * UnsupportedOperationException，而本类只在 Application / Service 上下文中使用。
+     * DisplayManager API 17 起可用，任何 Context 都能拿到。
+     */
+    override fun displayRotation(): Int =
+        (context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)
+            ?.getDisplay(Display.DEFAULT_DISPLAY)
+            ?.rotation
+            ?: Surface.ROTATION_0
+
+    override fun sampleNaturalOrientation(): NaturalOrientation {
+        val metrics = context.resources.displayMetrics
+        return naturalOrientationFrom(
+            widthPx = metrics.widthPixels,
+            heightPx = metrics.heightPixels,
+            rotation = displayRotation(),
+        )
+    }
+}
+```
+
+- [ ] **Step 5: 写实现**
+
+删除当前已提交的 `app/src/main/java/com/orientlock/data/SystemOrientationWriter.kt`，用下面这份完整替换：
+
+```kotlin
+package com.orientlock.data
+
+import com.orientlock.domain.NaturalOrientation
+import com.orientlock.domain.OrientationMode
+import com.orientlock.domain.RotationState
+import com.orientlock.domain.userRotationFor
+import kotlinx.coroutines.delay
+
+/**
+ * 全应用唯一的方向写入策略。
+ *
+ * 锁定一个方向必须同时做两件事：先关闭自动旋转，再写入目标角度。顺序不能反——
+ * 自动旋转开启时系统忽略 USER_ROTATION，且窗口管理器会用传感器值覆盖它；
+ * 先关再写能保证一次确定的跳转。
+ *
+ * 天然朝向探测零系统写入，且需连续两次采样一致才缓存（见 [naturalOrientation]）。
+ */
+class SystemOrientationWriter(
+    private val access: SystemOrientationAccess,
+    private val settle: suspend (Long) -> Unit = { delay(it) },
+) {
+
+    @Volatile
+    private var cachedNatural: NaturalOrientation? = null
+
+    /** 是否已获得「修改系统设置」特殊权限 */
+    fun canWrite(): Boolean = access.canWrite()
+
+    /**
+     * 探测并缓存设备的天然朝向，同一进程内只算一次（取到稳定值才算）。
+     *
+     * 零系统写入：只读，不改任何设置。
      *
      * 早先的设计是先把 USER_ROTATION 置 0 再读宽高，那有三个问题：
      * 一是留下「自动旋转被悄悄关掉」的副作用；二是旋转重构是异步的，
      * 紧接着读到的可能还是旧方向的宽高；三是这个结果会被持久化，
      * 判错就永久错——它还会连带把 OrientationMode.CURRENT
-     * 的固定角度污染成永远 0。当前实现三条一并消除。
+     * 的固定角度污染成永远 0。
+     *
+     * 现在改成纯计算，但单次采样仍可能落在方向重构的中间态：
+     * displayRotation() 已返回新值而 displayMetrics 还是旧值。
+     * 因此连采两次、间隔 [SAMPLE_SETTLE_MS]，一致才采信并缓存；
+     * 不一致说明设备正在转动，本进程先按第二次的结果用，但不缓存，
+     * 下次调用会重新采样，直到取到稳定值。
      */
-    fun naturalOrientation(): NaturalOrientation {
+    suspend fun naturalOrientation(): NaturalOrientation {
         cachedNatural?.let { return it }
-        val rotation = displayRotation()
-        val metrics = context.resources.displayMetrics
-        return naturalOrientationFrom(metrics.widthPixels, metrics.heightPixels, rotation)
-            .also { cachedNatural = it }
+        val first = access.sampleNaturalOrientation()
+        settle(SAMPLE_SETTLE_MS)
+        val second = access.sampleNaturalOrientation()
+        if (first == second) {
+            cachedNatural = second
+        }
+        return second
     }
 
-    fun readState(): RotationState = RotationState(
-        userRotation = Settings.System.getInt(
-            resolver, Settings.System.USER_ROTATION, Surface.ROTATION_0
-        ),
-        autoRotate = Settings.System.getInt(
-            resolver, Settings.System.ACCELEROMETER_ROTATION, 1
-        ) != 0,
-    )
+    fun readState(): RotationState =
+        RotationState(userRotation = access.userRotation(), autoRotate = access.autoRotate())
 
     /** 设备当前实际的显示旋转角度 */
-    fun displayRotation(): Int =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            context.display?.rotation ?: Surface.ROTATION_0
-        } else {
-            @Suppress("DEPRECATION")
-            (context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager)
-                .defaultDisplay.rotation
-        }
+    fun displayRotation(): Int = access.displayRotation()
 
     /**
      * 应用一个方向模式。
@@ -1303,51 +1627,60 @@ class SystemOrientationWriter(private val context: Context) {
         pinnedRotationForCurrent: Int,
     ) {
         when (mode) {
-            OrientationMode.AUTO -> applyAutoRotate(true)
+            OrientationMode.AUTO -> access.writeAutoRotate(true)
+
             OrientationMode.CURRENT -> {
-                applyAutoRotate(false)
-                applyUserRotation(pinnedRotationForCurrent)
+                access.writeAutoRotate(false)
+                writeUserRotation(pinnedRotationForCurrent)
             }
+
             else -> {
                 val angle = mode.userRotationFor(natural)
                     ?: error("模式 $mode 不是固定角度模式")
-                applyAutoRotate(false)
-                applyUserRotation(angle)
+                access.writeAutoRotate(false)
+                writeUserRotation(angle)
             }
         }
     }
 
-    private fun applyAutoRotate(enabled: Boolean) {
-        Settings.System.putInt(
-            resolver,
-            Settings.System.ACCELEROMETER_ROTATION,
-            if (enabled) 1 else 0,
-        )
+    private fun writeUserRotation(angle: Int) {
+        require(angle in NATURAL..THREE_QUARTER) { "非法旋转角度 $angle" }
+        access.writeUserRotation(angle)
     }
 
-    private fun applyUserRotation(angle: Int) {
-        require(angle in Surface.ROTATION_0..Surface.ROTATION_270) {
-            "非法旋转角度 $angle"
-        }
-        Settings.System.putInt(resolver, Settings.System.USER_ROTATION, angle)
+    private companion object {
+        /** 与 android.view.Surface.ROTATION_* 等值，避免 data 层依赖具体常量来源 */
+        const val NATURAL = 0
+        const val THREE_QUARTER = 3
+
+        /** 方向重构的稳定等待；仅天然朝向探测用，且每进程最多一次 */
+        const val SAMPLE_SETTLE_MS = 300L
     }
 }
 ```
 
-- [ ] **Step 2: 编译验证**
+同时把 `app/src/main/java/com/orientlock/data/Preferences.kt` 与 `SettingsOrientationRepository.kt`（Task 7，尚未创建）保留原样。
+
+- [ ] **Step 6: 运行测试确认通过**
 
 Run:
 ```bash
-cd /e/APP/2026-9-25 && ./gradlew :app:compileDebugKotlin --console=plain
+cd /e/APP/2026-9-25 && ./gradlew :app:testDebugUnitTest --console=plain 2>&1 | tail -10
 ```
+Expected: `BUILD SUCCESSFUL`，本任务 13 个测试 + 既有 30 个 = 43 个全通过
 
-Expected: `BUILD SUCCESSFUL`
+- [ ] **Step 7: 编译验证**
 
-- [ ] **Step 3: Commit**
+Run:
+```bash
+cd /e/APP/2026-9-25 && ./gradlew :app:compileDebugKotlin --console=plain 2>&1 | tail -10
+```
+Expected: `BUILD SUCCESSFUL`。注意 `SystemOrientationWriter` 的构造签名已变——Task 7 的 Repository 需按新签名调用 `SystemOrientationWriter(AndroidOrientationAccess(context))`。
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add app/src/main/java/com/orientlock/data/SystemOrientationWriter.kt
-git commit -m "feat: 系统方向设置写入器"
+git add app/src/main/java/com/orientlock/data/ app/src/test/java/com/orientlock/data/ && git commit -m "feat: 系统方向门与写入器（含测试）——探测零写入，旋转用 DisplayManager"
 ```
 
 ---
