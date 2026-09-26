@@ -20,11 +20,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -33,12 +31,9 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import com.orientlock.domain.NaturalOrientation
 import com.orientlock.domain.OrientationMode
-import com.orientlock.ui.theme.AutoStart
 import com.orientlock.ui.theme.GlassBorder
-import com.orientlock.ui.theme.LandscapeEnd
-import com.orientlock.ui.theme.LandscapeStart
-import com.orientlock.ui.theme.PortraitEnd
-import com.orientlock.ui.theme.PortraitStart
+import com.orientlock.ui.theme.midColor
+import com.orientlock.ui.theme.modeGradient
 
 /**
  * 界面视觉中心：一个手绘的手机示意图。
@@ -52,8 +47,14 @@ fun PhonePreview(
     mode: OrientationMode,
     natural: NaturalOrientation,
     modifier: Modifier = Modifier,
+    pinnedRotationDegrees: Int = 0,
 ) {
-    val targetDegrees = (mode.userRotationFor(natural) ?: 0) * 90f
+    // CURRENT 的角度在选中瞬间就定下来了，存在 AppSettings.pinnedRotation 里；
+    // 不接这个参数，用户在横屏状态下点「当前方向」，设备锁横而示意图仍立着。
+    val targetDegrees = when (mode) {
+        OrientationMode.CURRENT -> pinnedRotationDegrees * 90f
+        else -> (mode.userRotationFor(natural) ?: 0) * 90f
+    }
     val rotation = remember { Animatable(0f) }
 
     LaunchedEffect(targetDegrees) {
@@ -113,7 +114,9 @@ private fun DrawScope.drawPhone(
     val left = center.x - phoneWidth / 2f
     val top = center.y - phoneHeight / 2f
 
-    val (start, end) = modeGradientColors(mode)
+    val gradient = mode.modeGradient
+    val start = gradient.first()
+    val end = gradient.last()
     val borderColor = if (locked) start else GlassBorder
 
     // 机身描边
@@ -126,7 +129,7 @@ private fun DrawScope.drawPhone(
     )
     // 屏幕内填充：取渐变中点色，透明度压低
     drawRoundRect(
-        color = lerp(start, end, 0.5f).copy(alpha = 0.12f * alpha),
+        color = gradient.midColor.copy(alpha = 0.12f * alpha),
         topLeft = Offset(left + phoneWidth * 0.06f, top + phoneHeight * 0.035f),
         size = Size(phoneWidth * 0.88f, phoneHeight * 0.93f),
         cornerRadius = CornerRadius(cornerRadius * 0.85f, cornerRadius * 0.85f),
@@ -160,17 +163,6 @@ private fun DrawScope.drawPhone(
             fontWeight = FontWeight.Bold,
         ),
     )
-}
-
-private fun modeGradientColors(mode: OrientationMode): Pair<Color, Color> = when (mode) {
-    OrientationMode.PORTRAIT,
-    OrientationMode.PORTRAIT_REVERSE,
-    OrientationMode.CURRENT -> PortraitStart to PortraitEnd
-
-    OrientationMode.LANDSCAPE,
-    OrientationMode.LANDSCAPE_REVERSE -> LandscapeStart to LandscapeEnd
-
-    OrientationMode.AUTO -> AutoStart to AutoStart
 }
 
 private fun modeGlyph(mode: OrientationMode): String = when (mode) {

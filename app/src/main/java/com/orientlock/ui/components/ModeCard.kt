@@ -28,17 +28,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.orientlock.R
 import com.orientlock.domain.OrientationMode
-import com.orientlock.ui.theme.AutoEnd
-import com.orientlock.ui.theme.AutoStart
 import com.orientlock.ui.theme.GlassBorder
 import com.orientlock.ui.theme.GlassFill
-import com.orientlock.ui.theme.LandscapeEnd
-import com.orientlock.ui.theme.LandscapeStart
-import com.orientlock.ui.theme.PortraitEnd
-import com.orientlock.ui.theme.PortraitStart
-import com.orientlock.ui.theme.ReverseEnd
-import com.orientlock.ui.theme.ReverseStart
 import com.orientlock.ui.theme.TextSecondary
+import com.orientlock.ui.theme.modeGradient
 
 /** 方向选择卡片；选中态用渐变描边 + 轻微放大 */
 @Composable
@@ -53,7 +46,7 @@ fun ModeCard(
         label = "card-scale",
     )
     val shape = RoundedCornerShape(20.dp)
-    val gradient = modeGradient(mode)
+    val gradient = mode.modeGradient
 
     Row(
         modifier = modifier
@@ -106,21 +99,6 @@ fun ModeCard(
         )
     }
 }
-
-/** 每个模式对应的渐变色，与 PhonePreview.modeGradientColors 保持同一套语义 */
-internal fun modeGradient(mode: OrientationMode): List<Color> = when (mode) {
-    OrientationMode.PORTRAIT,
-    OrientationMode.PORTRAIT_REVERSE,
-    OrientationMode.CURRENT -> listOf(PortraitStart, PortraitEnd)
-
-    OrientationMode.LANDSCAPE,
-    OrientationMode.LANDSCAPE_REVERSE -> listOf(LandscapeStart, LandscapeEnd)
-
-    OrientationMode.AUTO -> listOf(AutoStart, AutoEnd)
-}
-
-/** 「反向」两档用橙红，和 PhonePreview 里的竖/横区分开，视觉上更醒目 */
-internal fun reverseGradient(): List<Color> = listOf(ReverseStart, ReverseEnd)
 
 internal fun modeIconRes(mode: OrientationMode): Int = when (mode) {
     OrientationMode.PORTRAIT -> R.drawable.ic_mode_portrait
