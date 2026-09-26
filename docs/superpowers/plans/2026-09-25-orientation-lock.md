@@ -938,7 +938,7 @@ git commit -m "feat: 守护偏离判定"
         android:strokeColor="#FFFFFFFF"
         android:strokeWidth="1.7" />
     <path
-        android:pathData="M8,12h7M12.2,9l3,3l-3,3"
+        android:pathData="M8,12h7M12.6,10l2.4,2l-2.4,2"
         android:strokeColor="#FFFFFFFF"
         android:strokeWidth="1.8"
         android:strokeLineCap="round"
@@ -959,7 +959,7 @@ git commit -m "feat: 守护偏离判定"
         android:strokeColor="#FFFFFFFF"
         android:strokeWidth="1.7" />
     <path
-        android:pathData="M16,12h-7M11.8,9l-3,3l3,3"
+        android:pathData="M16,12h-7M11.4,10l-2.4,2l2.4,2"
         android:strokeColor="#FFFFFFFF"
         android:strokeWidth="1.8"
         android:strokeLineCap="round"
@@ -1037,7 +1037,7 @@ git commit -m "feat: 守护偏离判定"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
     <path
-        android:pathData="M6.343,6.343A8,8 0 1 1 17.657,6.343"
+        android:pathData="M17.657,6.343A8,8 0 1 1 6.343,6.343"
         android:strokeColor="#FFFFFFFF"
         android:strokeWidth="1.9"
         android:strokeLineCap="round" />
@@ -1048,6 +1048,8 @@ git commit -m "feat: 守护偏离判定"
         android:strokeLineCap="round" />
 </vector>
 ```
+
+> **端点顺序不能对调回 `M6.343,6.343A8,8 0 1 1 17.657,6.343`。** SVG 弧的端点→圆心换算中，圆心修正系数的符号由 `large-arc == sweep` 决定：两者相等时取负。从左上端点出发会让圆心落在 (12, 0.686)，弧顶到 y = −7.314，约 63% 的圆弧画到视口外被裁掉，只剩两块碎角。从右上端点出发才得到圆心 (12,12)，弧线自右侧经下方走到左上，正好在顶部留出 90° 断口。aapt2 只校验 XML 合法、从不计算 pathData，所以这种错误构建时完全看不出来。
 
 创建 `app/src/main/res/drawable/ic_setting_notification.xml`（铃铛 + 铃舌）：
 
@@ -1136,12 +1138,12 @@ git commit -m "feat: 守护偏离判定"
     android:viewportWidth="24" android:viewportHeight="24">
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M7,2h10a2,2 0 0 1 2,2v16a2,2 0 0 1 -2,2H7a2,2 0 0 1 -2,-2V4a2,2 0 0 1 2,-2z" />
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M11,6h2v12h-2z" />
+        android:fillType="evenOdd"
+        android:pathData="M7,2h10a2,2 0 0 1 2,2v16a2,2 0 0 1 -2,2H7a2,2 0 0 1 -2,-2V4a2,2 0 0 1 2,-2zM11,6h2v12h-2z" />
 </vector>
 ```
+
+> 必须用 `android:fillType="evenOdd"` 并把两个子路径合成一条。默认的 `nonZero` 环绕下，外框与内部竖条绕向相同、环绕数都是 1，竖条会被填成与外框同色从而完全看不见——那是一行死代码。`evenOdd` 会让竖条变成镂空，形状才有辨识度。`android:fillType` 需 API 24，本项目 minSdk 26，可用。
 
 - [ ] **Step 9: Commit**
 
