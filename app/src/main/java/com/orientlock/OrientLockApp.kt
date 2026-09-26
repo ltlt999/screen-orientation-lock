@@ -23,9 +23,15 @@ class OrientLockApp : Application() {
         /**
          * 启动方向服务，带兜底。
          *
-         * Android 15 起从 BOOT_COMPLETED 直接启动前台服务可能被系统拒绝
-         * （抛 IllegalStateException）。被拒时退化为 WorkManager 立即执行，
-         * 由 Worker 在系统允许的时机再拉起服务。
+         * 为什么抓 IllegalStateException 这个超类型：ForegroundServiceStartNotAllowedException
+         * 与 ServiceStartNotAllowedException 都是它的子类，但 API 31 才有，
+         * 而 minSdk 是 26——26~30 上系统抛的就是裸 IllegalStateException。
+         * 用超类型是唯一能覆盖整个支持区间的单一写法；同时它不会吞掉
+         * ForegroundServiceTypeException 那一类（那些继承 IllegalArgumentException），
+         * manifest 配错照样响亮地崩。
+         *
+         * 触发场景不止开机：Android 12 起应用没有可见窗口时启动前台服务也会被拒。
+         * 被拒时退化为 WorkManager 立即执行，由 Worker 在系统允许的时机再拉起服务。
          */
         fun startOrientationServiceSafely(context: Context) {
             try {
