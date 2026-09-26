@@ -1419,7 +1419,7 @@ class SystemOrientationWriterTest {
         access.reportNatural(NaturalOrientation.LANDSCAPE)
         val (writer) = writerOf(access)
 
-        val first = writer.naturalOrientation()
+        val first = writer.naturalOrientation().orientation
         val samplesAfterFirst = access.sampleCalls
         access.reportNatural(NaturalOrientation.PORTRAIT)
         val second = writer.naturalOrientation()
@@ -1427,6 +1427,25 @@ class SystemOrientationWriterTest {
         assertEquals(NaturalOrientation.LANDSCAPE, first)
         assertEquals("缓存后不应重新采样", first, second)
         assertEquals("第二次调用走了缓存、没有重新采样", 0, access.sampleCalls - samplesAfterFirst)
+    }
+
+    @Test
+    fun `两次采样不一致时结果标记为不稳定`() = runTest {
+        val access = FakeOrientationAccess()
+        val (writer) = writerOf(access)
+
+        access.reportNaturalOnce(NaturalOrientation.PORTRAIT, NaturalOrientation.LANDSCAPE)
+
+        assertFalse(writer.naturalOrientation().stable)
+    }
+
+    @Test
+    fun `两次采样一致时结果标记为稳定`() = runTest {
+        val access = FakeOrientationAccess()
+        access.reportNatural(NaturalOrientation.LANDSCAPE)
+        val (writer) = writerOf(access)
+
+        assertTrue(writer.naturalOrientation().stable)
     }
 
     @Test
@@ -1446,7 +1465,7 @@ class SystemOrientationWriterTest {
         val (writer) = writerOf(access)
 
         access.reportNaturalOnce(NaturalOrientation.PORTRAIT, NaturalOrientation.LANDSCAPE)
-        val observed = writer.naturalOrientation()
+        val observed = writer.naturalOrientation().orientation
         assertEquals("不一致时以第二次为准", NaturalOrientation.LANDSCAPE, observed)
         assertEquals(2, access.sampleCalls)
 
@@ -1589,6 +1608,8 @@ import com.orientlock.domain.NaturalOrientation
 import com.orientlock.domain.OrientationMode
 import com.orientlock.domain.RotationState
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * 全应用唯一的方向写入策略。
@@ -1607,36 +1628,58 @@ class SystemOrientationWriter(
     @Volatile
     private var cachedNatural: NaturalOrientation? = null
 
+    /** 探测互斥，见 [naturalOrientation] 的说明 */
+    private val probeMutex = Mutex()
+
     /** 是否已获得「修改系统设置」特殊权限 */
     fun canWrite(): Boolean = access.canWrite()
 
-    /**
-     * 探测并缓存设备的天然朝向，同一进程内只算一次（取到稳定值才算）。
-     *
-     * 零系统写入：只读，不改任何设置。
-     *
-     * 早先的设计是先把 USER_ROTATION 置 0 再读宽高，那有三个问题：
-     * 一是留下「自动旋转被悄悄关掉」的副作用；二是旋转重构是异步的，
-     * 紧接着读到的可能还是旧方向的宽高；三是这个结果会被持久化，
-     * 判错就永久错——它还会连带把 OrientationMode.CURRENT
-     * 的固定角度污染成永远 0。
-     *
-     * 现在改成纯计算，但单次采样仍可能落在方向重构的中间态：
-     * displayRotation() 已返回新值而 displayMetrics 还是旧值。
-     * 因此连采两次、间隔 [SAMPLE_SETTLE_MS]，一致才采信并缓存；
-     * 不一致说明设备正在转动，本进程先按第二次的结果用，但不缓存，
-     * 下次调用会重新采样，直到取到稳定值。
-     */
-    suspend fun naturalOrientation(): NaturalOrientation {
-        cachedNatural?.let { return it }
-        val first = access.sampleNaturalOrientation()
-        settle(SAMPLE_SETTLE_MS)
-        val second = access.sampleNaturalOrientation()
-        if (first == second) {
-            cachedNatural = second
-        }
-        return second
+/**
+ * 天然朝向探测结果。
+ *
+ * @property orientation 本次采到的天然朝向
+ * @property stable 两次采样是否一致。false 表示设备当时正在转动、
+ *   displayMetrics 还没跟上 displayRotation，该值**不可落盘**——
+ *   落盘了就永久错，而且只犯一次错。
+ */
+data class NaturalOrientationReading(
+    val orientation: NaturalOrientation,
+    val stable: Boolean,
+)
+
+/**
+ * 探测并缓存设备的天然朝向，同一进程内只算一次（取到稳定值才算）。
+ *
+ * 零系统写入：只读，不改任何设置。
+ *
+ * 早先的设计是先把 USER_ROTATION 置 0 再读宽高，那有三个问题：
+ * 一是留下「自动旋转被悄悄关掉」的副作用；二是旋转重构是异步的，
+ * 紧接着读到的可能还是旧方向的宽高；三是这个结果会被持久化，
+ * 判错就永久错——它还会连带把 OrientationMode.CURRENT
+ * 的固定角度污染成永远 0。
+ *
+ * 现在改成纯计算，但单次采样仍可能落在方向重构的中间态：
+ * displayRotation() 已返回新值而 displayMetrics 还是旧值。
+ * 因此连采两次、间隔 [SAMPLE_SETTLE_MS]：
+ * - 一致 → 采信、缓存，[NaturalOrientationReading.stable] 为 true
+ * - 不一致 → 返回第二次的值（让本次调用有数可用），但不缓存，
+ *   [NaturalOrientationReading.stable] 为 false，调用方**不得**把它写进
+ *   DataStore，否则一个被转动的瞬间就会永久定错整个设备的方向映射。
+ *
+ * 探测互斥：[Mutex] 保证同一进程内只有一个探测在跑。没有它的话，
+ * ViewModel 与前台服务两个作用域可能在 `settle` 的挂起点交错，
+ * 各跑一次探测、各写一次盘，last-writer-wins。
+ */
+suspend fun naturalOrientation(): NaturalOrientationReading = probeMutex.withLock {
+    cachedNatural?.let { return@withLock NaturalOrientationReading(it, true) }
+    val first = access.sampleNaturalOrientation()
+    settle(SAMPLE_SETTLE_MS)
+    val second = access.sampleNaturalOrientation()
+    if (first == second) {
+        cachedNatural = second
     }
+    NaturalOrientationReading(second, first == second)
+}
 
     fun readState(): RotationState =
         RotationState(userRotation = access.userRotation(), autoRotate = access.autoRotate())
@@ -1648,12 +1691,14 @@ class SystemOrientationWriter(
      * 应用一个方向模式。
      *
      * @param mode 目标模式
-     * @param natural 天然朝向，用于把模式换算成系统角度值
+     * @param natural 天然朝向。仅固定角度模式需要，[OrientationMode.AUTO] 可传 null——
+     *   它的分支只开自动旋转开关，不读这个值；传 null 是为了让调用方
+     *   （尤其是解锁路径）不必先跑一遍天然朝向探测。
      * @param pinnedRotationForCurrent 选中 [OrientationMode.CURRENT] 时要固定的角度
      */
     fun apply(
         mode: OrientationMode,
-        natural: NaturalOrientation,
+        natural: NaturalOrientation?,
         pinnedRotationForCurrent: Int,
     ) {
         when (mode) {
@@ -1668,8 +1713,9 @@ class SystemOrientationWriter(
             }
 
             else -> {
-                val angle = mode.userRotationFor(natural)
-                    ?: error("模式 $mode 不是固定角度模式")
+                val angle = mode.userRotationFor(
+                    requireNotNull(natural) { "固定角度模式需要天然朝向，AUTO 才可传 null" }
+                ) ?: error("模式 $mode 不是固定角度模式")
                 // 顺序有意为之：auto:off 必须先于 angle:。
                 // 自动旋转开启时窗口管理器会用传感器值覆盖 USER_ROTATION，
                 // 先关掉才能让写入的角度一次确定地生效。
@@ -1835,6 +1881,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.orientlock.domain.AppSettings
+import com.orientlock.domain.DisplayRotation
 import com.orientlock.domain.NaturalOrientation
 import com.orientlock.domain.OrientationMode
 import com.orientlock.domain.OrientationRepository
@@ -1870,25 +1917,32 @@ class SettingsOrientationRepository(
         dataStore.data.first().toAppSettings()
 
     override suspend fun setMode(mode: OrientationMode) {
-        // 第一次选方向时才探测天然朝向，探测结果同时落盘，之后不再探测
-        val natural = resolveNaturalOrientation()
         val pinned = if (mode == OrientationMode.CURRENT) writer.displayRotation() else 0
+        // 先落盘再写入系统。落盘的是**用户意图**：万一系统写入失败（例如 WRITE_SETTINGS
+        // 被收回，putInt 会静默失败或抛 SecurityException），守护的职责正是把系统
+        // 收敛回这个意图。反过来（先锁后记）一旦落盘失败，就成了
+        // 「系统锁着、应用忘了」的永久不一致，重启后开机恢复还会主动把用户的
+        // 选择改回去。MODE 与 PINNED_ROTATION 在同一次 edit 里写，不会出现半应用状态。
         dataStore.edit { prefs ->
             prefs[Keys.MODE] = mode.storageName
             prefs[Keys.PINNED_ROTATION] = pinned
         }
+        // AUTO 不需要天然朝向：apply 的 AUTO 分支只开自动旋转开关。
+        // 探测是 suspend 且带 300ms 稳定等待，放到这里避免解锁路径白等，
+        // 也避免一个只读动作顺手写盘。
+        val natural = if (mode == OrientationMode.AUTO) null else resolveNaturalOrientation(null)
         writer.apply(mode, natural, pinned)
     }
 
     override suspend fun guardTick(): Boolean {
         val snap = snapshot()
         if (!snap.guardEnabled) return false
-        val natural = resolveNaturalOrientation()
-        val target = snap.mode
-        if (target == OrientationMode.AUTO) return false
+        // AUTO 必须在探测之前短路：解锁状态既不需要天然朝向，也不该重写系统
+        if (snap.mode == OrientationMode.AUTO) return false
+        val natural = resolveNaturalOrientation(snap.naturalOrientation)
         val current = writer.readState()
-        if (!shouldReapply(current, target, natural)) return false
-        writer.apply(target, natural, snap.pinnedRotation)
+        if (!shouldReapply(current, snap.mode, natural)) return false
+        writer.apply(snap.mode, natural, snap.pinnedRotation)
         return true
     }
 
@@ -1904,19 +1958,36 @@ class SettingsOrientationRepository(
         dataStore.edit { it[Keys.GUARD] = enabled }
     }
 
-    /** 已探测过就直接用缓存值，否则探测并落盘 */
-    private suspend fun resolveNaturalOrientation(): NaturalOrientation {
-        snapshot().naturalOrientation?.let { return it }
-        val detected = writer.naturalOrientation()
-        dataStore.edit { it[Keys.NATURAL] = detected.name }
-        return detected
+    /**
+     * 取天然朝向：已落盘就直接用，否则探测。
+     *
+     * @param cached 调用方已读到的 [AppSettings.naturalOrientation]，传进来省一次
+     *   DataStore 读；没有就传 null
+     *
+     * **只有稳定的探测结果才允许落盘。** 两次采样不一致说明设备当时正在转动、
+     * displayMetrics 还没跟上 displayRotation，此时的值是对是错无法判断；
+     * 落盘了就永久错，而且只会错一次却再也改不回来（清除应用数据才行）。
+     * 不落盘时本次仍返回该值让调用继续，但 DataStore 保持 null，
+     * 下一次调用会重新探测，直到取到稳定值。
+     */
+    private suspend fun resolveNaturalOrientation(cached: NaturalOrientation?): NaturalOrientation {
+        cached?.let { return it }
+        val reading = writer.naturalOrientation()
+        if (reading.stable) {
+            dataStore.edit { it[Keys.NATURAL] = reading.orientation.name }
+        }
+        return reading.orientation
     }
 
     private fun androidx.datastore.preferences.core.Preferences.toAppSettings(): AppSettings {
         val mode = OrientationMode.fromStorageName(this[Keys.MODE])
         return AppSettings(
             mode = mode,
-            pinnedRotation = this[Keys.PINNED_ROTATION] ?: 0,
+            // 越界的持久化角度会让守护心跳周期性抛异常（服务上没有 try/catch，
+            // 于是变成每 10 秒崩一次）。DataStore 算外部输入，读取时就收敛掉。
+            pinnedRotation = (this[Keys.PINNED_ROTATION] ?: 0).takeIf {
+                it in DisplayRotation.NATURAL..DisplayRotation.THREE_QUARTER
+            } ?: 0,
             autoStartOnBoot = this[Keys.AUTO_START] ?: true,
             persistentNotification = this[Keys.NOTIFICATION] ?: true,
             guardEnabled = this[Keys.GUARD] ?: true,
