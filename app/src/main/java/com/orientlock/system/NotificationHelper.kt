@@ -85,10 +85,13 @@ class NotificationHelper(private val context: Context) {
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            // 顺序有意：系统折叠态最多显示 3 个 action，第 4 个要展开才看得到。
+            // 竖屏、横屏是核心，解除是「恢复正常」的出口，这三个必须常驻可见；
+            // 反向频率最低，放在第 4 位，展开后仍可用，不丢功能。
             .addAction(0, "竖屏", actionIntent(ACTION_SET_PORTRAIT))
             .addAction(0, "横屏", actionIntent(ACTION_SET_LANDSCAPE))
-            .addAction(0, "反向", reverseIntent(reverseTarget))
             .addAction(0, "解除", actionIntent(ACTION_UNLOCK))
+            .addAction(0, "反向", reverseIntent(reverseTarget))
             .build()
     }
 
