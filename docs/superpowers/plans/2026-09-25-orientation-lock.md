@@ -1226,7 +1226,7 @@ git add app/src/main/res/drawable/ && git commit -m "feat: 自绘矢量图标（
 >
 > **两处硬性要求，各有一次真实事故驱动：**
 > 1. `displayRotation()` 必须用 `DisplayManager.getDisplay(DEFAULT_DISPLAY)`，**不能用 `Context.getDisplay()`**。后者 API 30 引入，SDK javadoc 明写 `@throws UnsupportedOperationException if the method is called on an instance that is not associated with any display`，本类只会在 Application / Service 上下文中被构造（`OrientLockApp` 与 `BootReceiver`），点在安卓 11+ 上必然崩。
-> 2. `naturalOrientation()` 必须**零系统写入**，且连续采样两次、间隔 300ms 一致才缓存。单次采样可能落在方向重构的中间态（rotation 已变、`displayMetrics` 未变），而这个结果会经 Repository 落盘，判错就永久错。
+> 2. `naturalOrientation()` 必须**零系统写入**，且连续采样两次、间隔 300ms 一致才缓存，并把稳定性报给调用方。单次采样可能落在方向重构的中间态（rotation 已变、`displayMetrics` 未变）。**只有稳定的结果才允许经 Repository 落盘**——不稳定时本次照常使用该值，但不写 DataStore，下次重新探测；落盘了就是永久错，而且只犯一次错却再也改不回来。
 
 - [ ] **Step 1: 写测试替身**
 
@@ -2162,6 +2162,15 @@ git commit -m "feat: 常驻通知构建"
 ---
 
 ## Task 9: 前台服务与守护心跳
+
+**硬性要求（否则是崩溃循环）：** `Repository.setMode()` 与 `guardTick()` 必须包在 `try/catch` 里。两条已被证实可达的异常路径：
+
+1. `WRITE_SETTINGS` 被用户或系统收回后 `Settings.System.putInt` 抛 `SecurityException`；
+2. 任何残留的越界 `pinnedRotation` 在读取时未完全收敛，`writeUserRotation` 的 `require` 抛 `IllegalArgumentException`。
+
+服务的守护心跳每 10 秒跑一次，跑在 `SupervisorJob() + Dispatchers.Main.immediate` 上的 `scope.launch {}` 里。不捕获的话，一次异常就是一个未捕获异常 → 进程崩溃 → 服务重启 → 再抛，循环不止。捕获后只记日志并跳过本次心跳：方向状态本身是幂等的，下一次心跳自然会把系统收敛回意图。通知栏的 action 同样要包，否则点一下通知按钮就可能崩。
+
+
 
 **Files:**
 - Create: `app/src/main/java/com/orientlock/system/OrientationService.kt`
