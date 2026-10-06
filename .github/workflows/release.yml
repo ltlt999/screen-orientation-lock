@@ -36,13 +36,24 @@ jobs:
       #   KEYSTORE_PROPERTIES keystore.properties 的完整内容
       # 没有配置时这一步跳过，后面的构建会产出未签名包——
       # 开源项目应当「没密钥也能构建」，而不是直接失败。
+      #
+      # 注意：这里用 env 中转而不是在 if: 里直接写 secrets.XXX。
+      # GitHub 不允许在 if 条件中引用 secrets，写了会让整个 workflow 解析失败——
+      # 表现为每次 push 都出现一个以文件路径为名字的失败运行，很难看出原因。
       - name: 还原签名密钥
         id: keystore
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PROPERTIES: ${{ secrets.KEYSTORE_PROPERTIES }}
         run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "未配置签名密钥，将产出未签名包"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           mkdir -p keystore
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > keystore/release.jks
-          printf '%s' "${{ secrets.KEYSTORE_PROPERTIES }}" > keystore.properties
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > keystore/release.jks
+          printf '%s' "$KEYSTORE_PROPERTIES" > keystore.properties
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
       - name: 构建 release 包
@@ -55,7 +66,7 @@ jobs:
           NAME="screen-orientation-lock-${GITHUB_REF_NAME}.apk"
           cp "$SRC" "$NAME"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
-          echo "签名的: ${{ steps.keystore.outputs.signed == 'true' }}"
+          echo "是否已签名: ${{ steps.keystore.outputs.signed }}"
 
       - name: 创建 Release
         uses: softprops/action-gh-release@v3
