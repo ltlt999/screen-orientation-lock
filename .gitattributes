@@ -1,0 +1,25 @@
+# 统一换行符，避免 Windows 与 Linux/macOS 之间来回转换产生噪音 diff
+* text=auto eol=lf
+
+# 二进制文件绝不能做换行转换——尤其是 gradle-wrapper.jar，
+# 被转换过会导致 wrapper 校验失败、构建直接挂掉
+*.jar binary
+*.jks binary
+*.keystore binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.apk binary
+
+# 这两个是例外：Windows 批处理必须用 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Gradle wrapper 脚本必须保持 LF，否则在 Linux/macOS 上无法执行
+gradlew text eol=lf
+
+# 让 GitHub 语言统计正确识别
+*.kt linguist-language=Kotlin
+*.kts linguist-language=Kotlin

@@ -12,6 +12,10 @@
   <img src="docs/images/screen-permission.png" width="300" alt="权限引导">
 </p>
 
+<p align="center">
+  <b>English → <a href="README.en.md">README.en.md</a></b>
+</p>
+
 ---
 
 ## 它和别的方向锁有什么不同
