@@ -10,3 +10,7 @@ captures/
 *.apk
 *.keystore
 *.jks
+
+# 正式签名密钥与口令：绝不入库
+keystore/
+keystore.properties
