@@ -17,8 +17,14 @@ fun AppRoot() {
         )
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val hint by viewModel.hint.collectAsStateWithLifecycle()
 
     GradientBackground {
-        MainScreen(state = state, viewModel = viewModel)
+        MainScreen(
+            state = state,
+            hint = hint,
+            onHintShown = viewModel::consumeHint,
+            viewModel = viewModel,
+        )
     }
 }

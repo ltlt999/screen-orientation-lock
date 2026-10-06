@@ -18,6 +18,8 @@ import com.orientlock.data.AndroidOrientationAccess
 import com.orientlock.data.SettingsOrientationRepository
 import com.orientlock.data.SystemOrientationWriter
 import com.orientlock.data.settingsDataStore
+import com.orientlock.domain.AppSettings
+import com.orientlock.domain.NaturalOrientation
 import com.orientlock.domain.OrientationMode
 import com.orientlock.domain.OrientationRepository
 import kotlinx.coroutines.CoroutineScope
@@ -73,6 +75,17 @@ class OrientationService : Service() {
     private lateinit var repository: OrientationRepository
     private lateinit var notifications: NotificationHelper
 
+    /**
+     * 悬浮窗方向接管。锁定的**主力通路**——写系统设置只能影响「没声明方向」的应用，
+     * 而悬浮窗能压过应用自己声明的方向（车机桌面、部分音视频应用都靠它）。
+     *
+     * 必须由本服务持有：窗口一旦随 Activity 或 ViewModel 销毁，锁定就没了。
+     */
+    private lateinit var overlay: OverlayOrientationController
+
+    /** 上一次渲染通知时的关键状态，避免心跳每 10 秒重复 post 同一条通知 */
+    private var lastRenderedNotification: Triple<OrientationMode, Boolean, Boolean>? = null
+
     private val handler = Handler(Looper.getMainLooper())
 
     /**
@@ -112,6 +125,40 @@ class OrientationService : Service() {
         notifications = NotificationHelper(this)
         // 必须在第一次 startForeground 之前建好渠道，否则通知根本不显示
         notifications.ensureChannel()
+
+        overlay = OverlayOrientationController(this)
+
+        // 模式一变就更新悬浮窗。这是响应式的：ViewModel 改设置、通知栏按钮改设置、
+        // 开机恢复，全都会经由同一条 settings 流到达这里，不需要各处分别调用。
+        scope.launch {
+            repository.settings.collect { snap ->
+                applyOverlay(snap)
+                refreshNotification()
+            }
+        }
+    }
+
+    /**
+     * 把当前模式施加到悬浮窗上。
+     *
+     * 没拿到「显示在其他应用上层」权限时 [OverlayOrientationController.setOrientation]
+     * 会返回 false，这里只记日志——此时写系统设置那条路仍然生效，
+     * 只是锁不住自己声明了方向的应用。
+     */
+    private fun applyOverlay(snap: AppSettings) {
+        val natural = snap.naturalOrientation
+        if (natural == null && snap.mode == OrientationMode.CURRENT) {
+            // 「当前方向」要把固定角度换算成绝对方向，必须知道天然朝向。
+            // 还没探测出来就先不接管；探测结果落盘会触发下一次发射，那时再接管。
+            return
+        }
+        val orientation = snap.mode.overlayOrientationFor(
+            natural = natural ?: NaturalOrientation.PORTRAIT,
+            pinnedRotation = snap.pinnedRotation,
+        )
+        if (!overlay.setOrientation(orientation)) {
+            Log.w(TAG, "悬浮窗接管失败：多半是没授予「显示在其他应用上层」权限")
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -121,7 +168,7 @@ class OrientationService : Service() {
             notifications.build(
                 currentMode = lastKnownMode,
                 notificationGranted = notificationGranted(),
-                settingsWritable = writer.canWrite(),
+                lockAvailable = overlay.isHolding || writer.canWrite(),
             )
         )
 
@@ -163,21 +210,39 @@ class OrientationService : Service() {
         } catch (e: Exception) {
             Log.w(TAG, "守护心跳失败", e)
         }
+        // 心跳跑完必须刷新通知。权限被收回后 putInt 会静默失败（它返回 Boolean，
+        // 我们拿不到也改不了系统），此时若不刷新，通知会一直显示「xx锁定中」——
+        // 应用在替自己撒谎，用户会以为锁上了。
+        refreshNotification()
     }
 
     private fun notificationGranted(): Boolean =
         AndroidPermissionChecker.canPostNotifications(this)
 
-    private suspend fun refreshNotification() {
+    /**
+     * 刷新常驻通知。
+     *
+     * 状态没变就不重复 post：守护每 10 秒跑一次心跳，无条件 notify 会让系统
+     * 每 10 秒重建一次通知。状态变了（模式变了、权限变了）才发。
+     */
+    private suspend fun refreshNotification(force: Boolean = false) {
         val snap = repository.snapshot()
         lastKnownMode = snap.mode
+        val granted = notificationGranted()
+        // 只要两条通路有一条能用，锁定就是有效的：悬浮窗能压过应用声明的方向，
+        // 写系统设置能覆盖跟随系统的应用。
+        val lockAvailable = overlay.isHolding || writer.canWrite()
+        val key = Triple(snap.mode, granted, lockAvailable)
+        if (!force && key == lastRenderedNotification) return
+        lastRenderedNotification = key
+
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(
             NotificationHelper.NOTIFICATION_ID,
             notifications.build(
                 currentMode = snap.mode,
-                notificationGranted = notificationGranted(),
-                settingsWritable = writer.canWrite(),
+                notificationGranted = granted,
+                lockAvailable = lockAvailable,
             ),
         )
     }
@@ -238,6 +303,9 @@ class OrientationService : Service() {
 
     override fun onDestroy() {
         stopGuard()
+        // 服务没了，悬浮窗也必须撤掉：窗口持有者是本服务，留着会变成孤儿窗口，
+        // 用户会看到一个锁不掉也解不开的方向。
+        overlay.stop()
         scope.cancel()
         instanceRef = null
         super.onDestroy()

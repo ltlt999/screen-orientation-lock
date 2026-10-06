@@ -7,6 +7,11 @@ import com.orientlock.domain.NaturalOrientation
 class FakeOrientationAccess(
     var canWriteResult: Boolean = true,
     var rotation: Int = DisplayRotation.NATURAL,
+    /**
+     * 写系统设置是否成功。置 false 用来模拟「没授予 WRITE_SETTINGS」——
+     * 真实设备上那会让 putInt 抛 SecurityException，实测确认过。
+     */
+    var writesSucceed: Boolean = true,
 ) : SystemOrientationAccess {
 
     /** 按发生顺序记录的写操作，形如 "auto:on" / "auto:off" / "angle:1" */
@@ -26,14 +31,18 @@ class FakeOrientationAccess(
 
     override fun autoRotate(): Boolean = autoRotateOn
 
-    override fun writeAutoRotate(enabled: Boolean) {
+    override fun writeAutoRotate(enabled: Boolean): Boolean {
         writes += if (enabled) "auto:on" else "auto:off"
+        if (!writesSucceed) return false
         autoRotateOn = enabled
+        return true
     }
 
-    override fun writeUserRotation(angle: Int) {
+    override fun writeUserRotation(angle: Int): Boolean {
         writes += "angle:$angle"
+        if (!writesSucceed) return false
         rotation = angle
+        return true
     }
 
     override fun displayRotation(): Int = rotation

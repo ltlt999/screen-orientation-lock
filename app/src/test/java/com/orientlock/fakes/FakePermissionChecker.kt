@@ -5,7 +5,9 @@ import com.orientlock.system.PermissionChecker
 class FakePermissionChecker(
     var writeSettings: Boolean = true,
     var postNotifications: Boolean = true,
+    var drawOverlays: Boolean = true,
 ) : PermissionChecker {
     override fun canWriteSettings(): Boolean = writeSettings
     override fun canPostNotifications(): Boolean = postNotifications
+    override fun canDrawOverlays(): Boolean = drawOverlays
 }

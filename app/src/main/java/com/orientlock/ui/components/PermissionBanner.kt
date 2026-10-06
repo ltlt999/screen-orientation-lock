@@ -19,6 +19,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,12 +31,26 @@ import com.orientlock.R
 import com.orientlock.ui.theme.TextSecondary
 import com.orientlock.ui.theme.WarningAmber
 
-/** 「修改系统设置」权限引导；授权后由 visible=false 收起 */
+/**
+ * 琥珀色权限引导卡。
+ *
+ * 文案与按钮由调用方给定：本应用有两条权限通路（悬浮窗、修改系统设置），
+ * 组合出的提示有好几种，把判断放在这里会让这个纯展示组件长出一堆分支。
+ * 授权后由 `visible = false` 收起。
+ *
+ * @param primaryLabel 主按钮文案；主按钮是「更推荐的那条路」
+ * @param secondaryLabel 次要按钮，用于另一条权限通路；不需要就传 null
+ */
 @Composable
 fun PermissionBanner(
     visible: Boolean,
-    onGrantClick: () -> Unit,
+    title: String,
+    message: String,
+    primaryLabel: String,
+    onPrimaryClick: () -> Unit,
     modifier: Modifier = Modifier,
+    secondaryLabel: String? = null,
+    onSecondaryClick: (() -> Unit)? = null,
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -59,30 +74,45 @@ fun PermissionBanner(
             ) {
                 Icon(
                     painter = painterResource(R.drawable.ic_warning),
-                    contentDescription = "需要权限",
+                    contentDescription = title,
                     tint = WarningAmber,
                     modifier = Modifier.size(20.dp),
                 )
                 Text(
-                    text = "需要一项权限",
+                    text = title,
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
             }
             Text(
-                text = "锁定屏幕方向需要开启「修改系统设置」权限。点下方按钮跳到系统设置页打开开关，返回后即可使用。",
+                text = message,
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary,
             )
-            Button(
-                onClick = onGrantClick,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = WarningAmber,
-                    contentColor = Color(0xFF1A1206),
-                ),
-                shape = RoundedCornerShape(12.dp),
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text("去开启")
+                Button(
+                    onClick = onPrimaryClick,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = WarningAmber,
+                        contentColor = Color(0xFF1A1206),
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text(primaryLabel)
+                }
+                if (secondaryLabel != null && onSecondaryClick != null) {
+                    TextButton(
+                        onClick = onSecondaryClick,
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = TextSecondary,
+                        ),
+                    ) {
+                        Text(secondaryLabel)
+                    }
+                }
             }
         }
     }

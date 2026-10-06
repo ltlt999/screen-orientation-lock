@@ -15,6 +15,13 @@ import kotlinx.coroutines.sync.withLock
  * 自动旋转开启时系统忽略 USER_ROTATION，且窗口管理器会用传感器值覆盖它；
  * 先关再写能保证一次确定的跳转。
  *
+ * **写入失败不算错误。** 没授予 WRITE_SETTINGS 时系统会抛 SecurityException
+ * （见 [SystemOrientationAccess.writeUserRotation]），这里已经把它转成返回值，
+ * 本类只忽略、不抛。原因是写系统设置只是**次要通路**：主通路是
+ * [com.orientlock.system.OverlayOrientationController] 的悬浮窗，
+ * 它能压过应用自己声明的方向，而写设置不能。只有悬浮窗也拿不到时才真的锁不住，
+ * 那个状态由通知文案和界面提示如实反映。
+ *
  * 本类只做决策，所有系统读写都经由 [SystemOrientationAccess]，
  * 因此可以在 JVM 上用假实现测试。
  */

@@ -109,8 +109,9 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `权限未授予时选择方向不会写入系统也不会启动服务`() = runTest {
+    fun `两条通路都未授予时选择方向不会写入系统也不会启动服务`() = runTest {
         permissions.writeSettings = false
+        permissions.drawOverlays = false
         val vm = createViewModel()
         subscribeTo(vm)
 
@@ -120,7 +121,66 @@ class MainViewModelTest {
         assertEquals(0, services.startCalls)
         // canWriteSettings=false 同时也是 MainUiState() 的默认值，靠 isLoaded 排除假绿
         assertTrue(vm.uiState.value.isLoaded)
-        assertFalse(vm.uiState.value.canWriteSettings)
+        assertFalse(vm.uiState.value.canLock)
+    }
+
+    @Test
+    fun `两条通路都未授予时给出提示而不是静默无反应`() = runTest {
+        permissions.writeSettings = false
+        permissions.drawOverlays = false
+        val vm = createViewModel()
+        subscribeTo(vm)
+
+        vm.selectMode(OrientationMode.PORTRAIT)
+
+        assertTrue("必须给用户反馈，不能静默 return", vm.hint.value != null)
+        vm.consumeHint()
+        assertEquals(null, vm.hint.value)
+    }
+
+    @Test
+    fun `只授予悬浮窗权限时也能锁定`() = runTest {
+        // 悬浮窗是能力更强的通路：它能压过应用自己声明的方向，
+        // 所以只有它时锁定依然有效，不该被权限门挡住。
+        permissions.writeSettings = false
+        permissions.drawOverlays = true
+        val vm = createViewModel()
+        subscribeTo(vm)
+
+        vm.selectMode(OrientationMode.PORTRAIT)
+
+        assertEquals(listOf(OrientationMode.PORTRAIT), repository.modeHistory)
+        assertEquals(1, services.startCalls)
+        assertTrue(vm.uiState.value.canLock)
+        assertEquals(null, vm.hint.value)
+    }
+
+    @Test
+    fun `只授予修改系统设置权限时也能锁定`() = runTest {
+        permissions.writeSettings = true
+        permissions.drawOverlays = false
+        val vm = createViewModel()
+        subscribeTo(vm)
+
+        vm.selectMode(OrientationMode.LANDSCAPE)
+
+        assertEquals(listOf(OrientationMode.LANDSCAPE), repository.modeHistory)
+        assertTrue(vm.uiState.value.canLock)
+    }
+
+    @Test
+    fun `写系统设置抛异常时不崩且仍然启动服务`() = runTest {
+        // 真实设备上没授予 WRITE_SETTINGS 时 Settings.System.putInt 抛 SecurityException。
+        // 主通路是悬浮窗，它不依赖那个权限——所以异常绝不能把应用打崩，
+        // 服务也必须照常启动，否则悬浮窗无从接管。实测时这个异常真的让应用闪退了。
+        val vm = createViewModel()
+        subscribeTo(vm)
+        repository.throwOnSetMode = true
+
+        vm.selectMode(OrientationMode.PORTRAIT)
+
+        assertTrue("必须给出提示，不能静默", vm.hint.value != null)
+        assertEquals("服务仍要启动，悬浮窗才能接管", 1, services.startCalls)
     }
 
     @Test

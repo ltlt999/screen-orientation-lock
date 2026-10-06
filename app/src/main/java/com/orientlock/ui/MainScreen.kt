@@ -1,5 +1,6 @@
 package com.orientlock.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,13 +12,16 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
@@ -35,6 +39,8 @@ import com.orientlock.ui.components.SettingRow
 import com.orientlock.ui.components.SettingsCard
 import com.orientlock.ui.components.StatusPill
 import com.orientlock.ui.theme.TextTertiary
+import com.orientlock.ui.theme.WarningAmber
+import kotlinx.coroutines.delay
 
 private val MODE_GRID = listOf(
     OrientationMode.PORTRAIT,
@@ -45,9 +51,14 @@ private val MODE_GRID = listOf(
     OrientationMode.AUTO,
 )
 
+/** 一次性提示停留时长 */
+private const val HINT_DURATION_MS = 4_000L
+
 @Composable
 fun MainScreen(
     state: MainUiState,
+    hint: String?,
+    onHintShown: () -> Unit,
     viewModel: MainViewModel,
     modifier: Modifier = Modifier,
 ) {
@@ -96,10 +107,29 @@ fun MainScreen(
 
         Spacer(Modifier.height(20.dp))
 
+        // 两条权限通路，提示按「缺哪条」分情况：
+        // 一条都没有 = 完全锁不了；只有写设置 = 能锁跟随系统的应用，但锁不住自己
+        // 声明方向的（车机桌面那类），所以推荐补上悬浮窗。
+        val needsOverlay = !state.canDrawOverlays
         PermissionBanner(
-            visible = !state.canWriteSettings,
-            onGrantClick = {
-                context.startActivity(PermissionIntents.writeSettings(context))
+            visible = state.isLoaded && needsOverlay,
+            title = if (state.canWriteSettings) "开启悬浮窗可锁住更多应用" else "锁定需要一项权限",
+            message = if (state.canWriteSettings) {
+                "当前只能锁住「跟随系统方向」的应用。车机桌面、部分音视频应用会在自己的" +
+                    "代码里声明方向，安卓优先听它们的——只有「显示在其他应用上层」权限能压过去。"
+            } else {
+                "「显示在其他应用上层」能压过应用自己声明的方向，是推荐的一条；" +
+                    "「修改系统设置」只能锁住跟随系统方向的应用。两条都不通时锁定不会生效。"
+            },
+            primaryLabel = "开启悬浮窗",
+            onPrimaryClick = {
+                context.startActivity(PermissionIntents.drawOverlays(context))
+            },
+            secondaryLabel = if (state.canWriteSettings) null else "修改系统设置",
+            onSecondaryClick = if (state.canWriteSettings) {
+                null
+            } else {
+                { context.startActivity(PermissionIntents.writeSettings(context)) }
             },
         )
 
@@ -127,6 +157,26 @@ fun MainScreen(
         )
 
         Spacer(Modifier.height(24.dp))
+
+        // 一次性提示。放在方向卡片正上方——用户是点了卡片才触发的，
+        // 提示出现在这里才在视野内；放页面顶部在横屏或滚动后会被滑出屏幕。
+        if (hint != null) {
+            LaunchedEffect(hint) {
+                delay(HINT_DURATION_MS)
+                onHintShown()
+            }
+            Text(
+                text = hint,
+                style = MaterialTheme.typography.bodySmall,
+                color = WarningAmber,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(WarningAmber.copy(alpha = 0.12f))
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+            )
+            Spacer(Modifier.height(12.dp))
+        }
 
         // 方向网格：2 列 3 行
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {

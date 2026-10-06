@@ -11,6 +11,15 @@ import androidx.core.content.ContextCompat
 interface PermissionChecker {
     fun canWriteSettings(): Boolean
     fun canPostNotifications(): Boolean
+
+    /**
+     * 能否显示在其他应用上层（悬浮窗）。
+     *
+     * 这是**唯一能越过「应用自己声明了方向」那条安卓规则**的权限：
+     * 有它才能锁住声明了 sensorLandscape 之类的应用（车机桌面、部分音视频应用），
+     * 光有 WRITE_SETTINGS 是锁不住的。
+     */
+    fun canDrawOverlays(): Boolean
 }
 
 class AndroidPermissionChecker(private val context: Context) : PermissionChecker {
@@ -26,9 +35,14 @@ class AndroidPermissionChecker(private val context: Context) : PermissionChecker
             true
         }
 
+    override fun canDrawOverlays(): Boolean = Settings.canDrawOverlays(context)
+
     companion object {
         /** 供前台服务在构造 PermissionChecker 之外直接查询用 */
         fun canPostNotifications(context: Context): Boolean =
             AndroidPermissionChecker(context).canPostNotifications()
+
+        fun canDrawOverlays(context: Context): Boolean =
+            AndroidPermissionChecker(context).canDrawOverlays()
     }
 }

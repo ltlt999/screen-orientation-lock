@@ -15,6 +15,18 @@ object PermissionIntents {
     fun writeSettings(context: Context): Intent =
         Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${context.packageName}"))
 
+    /**
+     * 打开「显示在其他应用上层」权限页。
+     *
+     * 不同 ROM 对这个页面的支持不一：个别设备会忽略 package: 参数而打开列表页，
+     * 所以调用方应能接受「跳到列表页」这个降级结果。
+     */
+    fun drawOverlays(context: Context): Intent =
+        Intent(
+            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:${context.packageName}"),
+        )
+
     /** 应用详情页，作为所有 ROM 引导的通用落点 */
     fun appDetails(context: Context): Intent =
         Intent(

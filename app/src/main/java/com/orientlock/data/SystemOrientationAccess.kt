@@ -18,8 +18,20 @@ interface SystemOrientationAccess {
     fun canWrite(): Boolean
     fun userRotation(): Int
     fun autoRotate(): Boolean
-    fun writeAutoRotate(enabled: Boolean)
-    fun writeUserRotation(angle: Int)
+
+    /**
+     * 写自动旋转开关。
+     *
+     * @return 是否写入成功。**没授予 WRITE_SETTINGS 时系统会抛 SecurityException，
+     *   不是静默失败**——实测安卓 12：`java.lang.SecurityException: ... was not granted
+     *   this permission: android.permission.WRITE_SETTINGS`。这里把它转成 false，
+     *   让上层可以继续走悬浮窗那条通路，而不是让整个应用崩掉。
+     */
+    fun writeAutoRotate(enabled: Boolean): Boolean
+
+    /** 写目标角度。失败语义同 [writeAutoRotate]。 */
+    fun writeUserRotation(angle: Int): Boolean
+
     fun displayRotation(): Int
 
     /** 由当前逻辑宽高与旋转角反推天然朝向；宽高与旋转须取自同一次采样 */
@@ -41,16 +53,26 @@ class AndroidOrientationAccess(private val context: Context) : SystemOrientation
         resolver, Settings.System.ACCELEROMETER_ROTATION, 1
     ) != 0
 
-    override fun writeAutoRotate(enabled: Boolean) {
-        Settings.System.putInt(
-            resolver,
-            Settings.System.ACCELEROMETER_ROTATION,
-            if (enabled) 1 else 0,
-        )
-    }
+    override fun writeAutoRotate(enabled: Boolean): Boolean = putIntSafely(
+        Settings.System.ACCELEROMETER_ROTATION,
+        if (enabled) 1 else 0,
+    )
 
-    override fun writeUserRotation(angle: Int) {
-        Settings.System.putInt(resolver, Settings.System.USER_ROTATION, angle)
+    override fun writeUserRotation(angle: Int): Boolean =
+        putIntSafely(Settings.System.USER_ROTATION, angle)
+
+    /**
+     * 写 Settings.System，把「没权限」转成返回值而不是异常。
+     *
+     * 实测（安卓 12）：没授予 WRITE_SETTINGS 时 `putInt` 抛
+     * `SecurityException: ... was not granted this permission`。
+     * 这条异常若不接住会一路冒到 ViewModel 的协程里把应用打崩——
+     * 而悬浮窗那条通路本来是能正常工作的，不该被它拖死。
+     */
+    private fun putIntSafely(key: String, value: Int): Boolean = try {
+        Settings.System.putInt(resolver, key, value)
+    } catch (e: SecurityException) {
+        false
     }
 
     /**

@@ -30,6 +30,13 @@ data class MainUiState(
     val canWriteSettings: Boolean = false,
     val canPostNotifications: Boolean = true,
     /**
+     * 是否已授予「显示在其他应用上层」。
+     *
+     * 这是**能力更强**的那个权限：有它才能锁住自己声明了方向的应用
+     * （车机桌面、部分音视频应用）；只有「修改系统设置」时，那类应用锁不住。
+     */
+    val canDrawOverlays: Boolean = false,
+    /**
      * Repository 的首次真实值是否已到达。
      *
      * 为 false 时 [settings] 还只是占位默认值——重启后 DataStore 里可能是竖屏，
@@ -37,7 +44,10 @@ data class MainUiState(
      * 界面应据此决定是否渲染，而不是乐观地相信 settings。
      */
     val isLoaded: Boolean = false,
-)
+) {
+    /** 两条通路至少有一条可用，锁定才有意义 */
+    val canLock: Boolean get() = canDrawOverlays || canWriteSettings
+}
 
 /**
  * 主界面 ViewModel。
@@ -56,8 +66,17 @@ class MainViewModel(
         MainUiState(
             canWriteSettings = permissions.canWriteSettings(),
             canPostNotifications = permissions.canPostNotifications(),
+            canDrawOverlays = permissions.canDrawOverlays(),
         )
     )
+
+    /** 一次性提示。界面消费后应调用 [consumeHint]，避免旋转屏幕时重复弹出。 */
+    private val _hint = MutableStateFlow<String?>(null)
+    val hint: StateFlow<String?> = _hint
+
+    fun consumeHint() {
+        _hint.value = null
+    }
 
     val uiState: StateFlow<MainUiState> =
         combine(repository.settings, permissionSnapshot) { settings, permission ->
@@ -65,6 +84,7 @@ class MainViewModel(
                 settings = settings,
                 canWriteSettings = permission.canWriteSettings,
                 canPostNotifications = permission.canPostNotifications,
+                canDrawOverlays = permission.canDrawOverlays,
                 isLoaded = true,
             )
         }.stateIn(
@@ -73,14 +93,30 @@ class MainViewModel(
             initialValue = MainUiState(isLoaded = false),
         )
 
-    /** 选一个方向。权限未授予时不写系统，也不启动服务，只让界面弹引导。 */
+    /**
+     * 选一个方向。
+     *
+     * 两条通路都没有时**必须给出反馈**：以前这里只是静默 return，用户点了卡片
+     * 什么都不发生、也不报错，会把「没授权限」误判成「软件锁不住」——
+     * 这个缺陷实测误导过一次排查。
+     */
     fun selectMode(mode: OrientationMode) {
-        if (!permissions.canWriteSettings()) {
-            permissionSnapshot.value = permissionSnapshot.value.copy(canWriteSettings = false)
+        val canOverlay = permissions.canDrawOverlays()
+        val canWrite = permissions.canWriteSettings()
+        if (!canOverlay && !canWrite) {
+            _hint.value = "还没有授予锁定所需的权限，请先点上方「去开启」"
+            refreshPermissions()
             return
         }
         viewModelScope.launch {
-            repository.setMode(mode)
+            // setMode 会写系统设置，而没授予 WRITE_SETTINGS 时系统抛 SecurityException。
+            // 主通路是悬浮窗，它不依赖那个权限，所以这里绝不能让异常逃出协程——
+            // 实测过一次：异常冒到协程外，应用直接闪退，连服务都没来得及启动。
+            try {
+                repository.setMode(mode)
+            } catch (e: Exception) {
+                _hint.value = "写入系统设置失败，已改用悬浮窗接管"
+            }
             services.start()
         }
     }
@@ -115,6 +151,7 @@ class MainViewModel(
             settings = permissionSnapshot.value.settings,
             canWriteSettings = permissions.canWriteSettings(),
             canPostNotifications = permissions.canPostNotifications(),
+            canDrawOverlays = permissions.canDrawOverlays(),
         )
     }
 

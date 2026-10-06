@@ -23,11 +23,20 @@ class FakeOrientationRepository(
 
     var guardTickReturnValue = false
 
+    /**
+     * 置 true 让 [setMode] 抛异常，模拟真实设备上「没授予 WRITE_SETTINGS 时
+     * Settings.System.putInt 抛 SecurityException」——实测确认过这个行为。
+     */
+    var throwOnSetMode = false
+
     override val settings: Flow<AppSettings> = state
 
     override suspend fun snapshot(): AppSettings = state.value
 
     override suspend fun setMode(mode: OrientationMode) {
+        if (throwOnSetMode) {
+            throw SecurityException("模拟：未授予 WRITE_SETTINGS")
+        }
         modeHistory += mode
         state.value = state.value.copy(mode = mode)
     }
