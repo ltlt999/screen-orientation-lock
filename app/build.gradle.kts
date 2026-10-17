@@ -28,8 +28,8 @@ android {
         applicationId = "com.orientlock"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.0.1"
     }
 
     signingConfigs {
@@ -40,6 +40,14 @@ android {
                 keyAlias = props.getProperty("keyAlias")
                 keyPassword = props.getProperty("keyPassword")
             }
+            // 显式打开全部签名方案，不能依赖 AGP 的默认值。
+            //
+            // AGP 默认只在 minSdk >= 24 时签 v2、不签 v1，这在小新 Pad Plus 2023 上
+            // 直接装不上（提示「软件包似乎无效」）——某些国产 ROM 的安装器仍会走
+            // v1 校验路径。三个方案全开、让系统自己挑能认的那个，多几 KB 体积换兼容。
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
         }
     }
 
