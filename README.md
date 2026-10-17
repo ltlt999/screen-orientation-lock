@@ -176,6 +176,20 @@ app/src/main/java/com/orientlock/
 - 最低支持 Android 8.0（API 26）
 - `targetSdk` 定为 35 而非 36：Android 16（API 36）起，系统会**无视平板与折叠屏上应用声明写死的方向**。定 35 可让本软件在大屏设备上继续生效。
 
+### 打包时必须显式开启全部签名方案
+
+`build.gradle.kts` 里这三行**不能删**：
+
+```kotlin
+enableV1Signing = true
+enableV2Signing = true
+enableV3Signing = true
+```
+
+AGP 在 `minSdk >= 24` 时默认**只签 v2**。而部分国产 ROM 的安装器仍会走 v1 校验路径，遇到只有 v2 签名的包会直接报「应用未安装：软件包似乎无效」。
+
+本项目 v1.0.0 就栽在这里——在联想小新 Pad Plus 2023 上装不上，补上 v3 签名并在 v1.0.1 里显式打开三个方案后恢复正常。
+
 ---
 
 ## 许可

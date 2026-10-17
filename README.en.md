@@ -187,6 +187,20 @@ app/src/main/java/com/orientlock/
 - Minimum Android 8.0 (API 26)
 - `targetSdk` is 35 rather than 36: starting with Android 16 (API 36), the system **ignores app-declared orientation on tablets and foldables**. Targeting 35 keeps this app effective on large screens.
 
+### Always enable every signature scheme when packaging
+
+These three lines in `build.gradle.kts` **must not be removed**:
+
+```kotlin
+enableV1Signing = true
+enableV2Signing = true
+enableV3Signing = true
+```
+
+With `minSdk >= 24`, AGP signs **v2 only** by default. Some Chinese OEM installers still validate via the v1 (JAR signing) path, and reject a v2-only package with *「应用未安装：软件包似乎无效」*.
+
+v1.0.0 of this project hit exactly that — it would not install on a Lenovo Xiaoxin Pad Plus 2023. v1.0.1 fixes it.
+
 ---
 
 ## License
