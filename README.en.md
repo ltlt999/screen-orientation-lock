@@ -203,6 +203,12 @@ v1.0.0 of this project hit exactly that — it would not install on a Lenovo Xia
 
 ---
 
+## Development notes
+
+- [`docs/从零到发布.md`](docs/从零到发布.md) — full development log and pitfall catalogue, focused on the bugs that **compiled fine, passed all unit tests, and still broke on a real device** (overlay-based orientation control, APK signature schemes, CI configuration, and more). Written in Chinese.
+
+---
+
 ## License
 
 [MIT](LICENSE)
